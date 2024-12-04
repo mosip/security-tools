@@ -28,6 +28,8 @@ jobs:
         include:
           - SERVICE_LOCATION: 'databreachdetector'
             SERVICE_NAME: 'databreachdetector'
+          - SERVICE_LOCATION: 'certmanager'
+            SERVICE_NAME: 'certmanager'
       fail-fast: false
     name: ${{ matrix.SERVICE_NAME }}
     uses: mosip/kattu/.github/workflows/docker-build.yml@master

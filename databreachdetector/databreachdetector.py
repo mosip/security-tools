@@ -20,6 +20,36 @@ def is_valid_mobile_number(phone_number):
     match = re.match(pattern, str(phone_number))
     return bool(match)
 
+def find_names(text):
+    # Regular expression pattern to match names
+    pattern = re.compile(r'\b[A-Z][a-z]*\s[A-Z][a-z]*\b')
+    match =re.match(pattern,str(text))
+    return bool(match)
+
+def find_ages(text):
+    # Regular expression pattern to match ages
+    pattern = re.compile(r'\b\d{1,2}\s*(?:years?|yrs?|yo|y\.o\.|months?|mos?)\b')
+    match =re.match(pattern,str(text))
+    return bool(match)
+
+def find_dates(text):
+    # Regular expression pattern to match dates in formats like DD/MM/YYYY or MM/DD/YYYY
+    pattern = r'\b(?:\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4})\b'
+    match =re.match(pattern,str(text))
+    return bool(match)
+
+def find_urls(text):
+    # Regular expression pattern to match URLs
+    pattern = r'\b(?:https?://|www\.)\S+\b'
+    match =re.match(pattern,str(text))
+    return bool(match)
+
+def find_locations(text):
+    # Regular expression pattern to match common location patterns
+    pattern = r'\b(?:city|town|village|state|province|country|continent|island)\s(?:of\s)?(?:\b[A-Z][a-z]*\b\s?)+'
+    match =re.match(pattern,str(text))
+    return bool(match)
+
 def deduce_sensitive_data(connection, database_name, schema_name, output_file, ignore_columns, ignore_tables):
     deduce_instance = Deduce()
 
@@ -34,7 +64,7 @@ def deduce_sensitive_data(connection, database_name, schema_name, output_file, i
                     # print(f"Ignoring Table: {table_name} in Database: {database_name}")
                     continue
 
-                # print(f"Currently checking Table: {table_name} in Database: {database_name}")
+                print(f"Currently checking Table: {table_name} in Database: {database_name}")
                 deduced_file.write(f"Currently checking Table: {table_name} in Database: {database_name}\n")
 
                 cursor.execute(f'SELECT * FROM {table_name}')
@@ -43,17 +73,22 @@ def deduce_sensitive_data(connection, database_name, schema_name, output_file, i
                 id_count = 0
                 mail_count = 0
                 mobile_count = 0
-
+                name = 0
+                age = 0
+                date = 0
+                url = 0
+                locations = 0
                 for row in rows:
                     for i, column_value in enumerate(row):
                         column_name = cursor.description[i][0]
 
                         if ignore_columns and column_name in ignore_columns:
                             continue
-
+                        config = ConfigParser()
                         deduced_result = deduce_instance.deidentify(
+                            #getting the disabled groups from db.properties file.
                             str(column_value),
-                            disabled={'names', 'institutions', 'locations', 'dates', 'ages', 'urls'}
+                            disabled= config.get('disabled_f', 'disabled', fallback='')
                         )
 
                         if deduced_result.annotations and is_valid_verhoeff(column_value):
@@ -73,7 +108,38 @@ def deduce_sensitive_data(connection, database_name, schema_name, output_file, i
                                 file.write(f"Column: {column_name}, Data: {column_value}\n")
                                 file.write(f"Deduced Findings: {deduced_result.annotations}\n\n")
 
-                print(f"{mail_count} mail id's, {mobile_count} mobile numbers, and {id_count} id's are found in {table_name} table in {database_name} database")
+                        
+                            if deduced_result.annotations and find_names(column_value):
+                                with open('names.txt', 'a') as file:
+                                    name += 1
+                                    file.write(f"Column: {column_name}, Data: {column_value}\n")
+                                    file.write(f"Deduced Findings: {deduced_result.annotations}\n\n")
+                                    
+                            if deduced_result.annotations and find_ages(column_value):
+                                with open('ages.txt', 'a') as file:
+                                    age += 1
+                                    file.write(f"Column: {column_name}, Data: {column_value}\n")
+                                    file.write(f"Deduced Findings: {deduced_result.annotations}\n\n")
+
+                            if deduced_result.annotations and find_dates(column_value):
+                                with open('dates.txt', 'a') as file:
+                                    date += 1
+                                    file.write(f"Column: {column_name}, Data: {column_value}\n")
+                                    file.write(f"Deduced Findings: {deduced_result.annotations}\n\n")
+
+                            if deduced_result.annotations and find_urls(column_value):
+                                with open('url.txt', 'a') as file:
+                                    url += 1
+                                    file.write(f"Column: {column_name}, Data: {column_value}\n")
+                                    file.write(f"Deduced Findings: {deduced_result.annotations}\n\n")
+
+                            if deduced_result.annotations and find_locations(column_value):
+                                with open('locations.txt', 'a') as file:
+                                    locations += 1
+                                    file.write(f"Column: {column_name}, Data: {column_value}\n")
+                                    file.write(f"Deduced Findings: {deduced_result.annotations}\n\n")
+
+                print(f"{mail_count} mail id's, {mobile_count} mobile numbers, {id_count} id's, {name} names, {age} ages, {date} dates, {url} urls, {locations} locations are found in {table_name} table in {database_name} database")
 
 def push_reports_to_s3(s3_host, s3_region, s3_user_key, s3_user_secret, s3_bucket_name):
     mc = Minio(s3_host,
@@ -87,13 +153,17 @@ def push_reports_to_s3(s3_host, s3_region, s3_user_key, s3_user_secret, s3_bucke
             mc.make_bucket(s3_bucket_name, location=s3_region)
 
         # Ensure files exist before attempting to upload
-        for filename in ['id.txt', 'mails.txt', 'mobile_numbers.txt']:
+        for filename in ['id.txt', 'mails.txt', 'mobile_numbers.txt','names.txt','ages.txt','dates.txt','urls.txt','locations.txt']:
             open(filename, 'a').close()
 
         mc.fput_object(s3_bucket_name, 'reports/id.txt', 'id.txt')
         mc.fput_object(s3_bucket_name, 'reports/mails.txt', 'mails.txt')
         mc.fput_object(s3_bucket_name, 'reports/mobile_numbers.txt', 'mobile_numbers.txt')
-
+        mc.fput_object(s3_bucket_name, 'reports/names.txt', 'names.txt')
+        mc.fput_object(s3_bucket_name, 'reports/ages.txt', 'ages.txt')
+        mc.fput_object(s3_bucket_name, 'reports/dates.txt', 'dates.txt')
+        mc.fput_object(s3_bucket_name, 'reports/url.txt', 'url.txt')
+        mc.fput_object(s3_bucket_name, 'reports/locations.txt', 'locations.txt')
         print("\nReports pushed to MinIO")
 
     except ResponseError as err:
@@ -130,7 +200,7 @@ def deduce_sensitive_data_in_databases():
 
     # Define the databases list
     databases = [
-        {"name": "mosip_pms", "schema": "pms"},
+        {"name": "mosip_resident", "schema": "resident"},
         # Add other databases as needed
     ]
 
@@ -150,7 +220,7 @@ def deduce_sensitive_data_in_databases():
             deduce_sensitive_data(connection, db_info['name'], db_info['schema'], output_file_path, ignore_columns,
                                    ignore_tables)
 
-        print(f"\nDeduced findings saved to {output_file_path}, mails.txt, mobile_numbers.txt")
+        print(f"\nDeduced findings saved to respective text files")
 
         # Add the following lines to push reports to MinIO
         s3_host = minio_host
