@@ -122,14 +122,16 @@ pre_expiry_days = os.environ.get('pre-expiry-days') or read_bootstrap_properties
 TOKEN = authenticate_and_get_token(base_url, client_secret)
 
 if TOKEN:
-    partner_ids = os.environ.get('PARTNER_IDS')
+    partner_ids = os.environ.get('PARTNER_IDS_ENV')
     if partner_ids:
         partner_ids = partner_ids.split(',')
+        print ("Getting list of partners from env variable")
     else:
         with open('partner.properties', 'r') as file:
             for line in file:
                 if line.startswith('PARTNER_ID'):
                     partner_ids = line.strip().split('=')[1].split(',')
+                    print ("Getting list of partners from local variable")
 
     for PARTNER_ID in partner_ids:
         print(f"\nProcessing partner ID: {PARTNER_ID.strip()}")
