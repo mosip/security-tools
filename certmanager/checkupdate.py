@@ -107,9 +107,10 @@ def upload_certificate_with_token(token, cert_data, partner_id, base_url):
     }
     response = requests.post(upload_url, headers=headers, json=upload_data)
     if "certificateId" not in response.text:
-        print("Certificate renewal failed.", response.text)
+        print(f"[{partner_id}] Certificate renewal failed: {response.text}")
     else:
-        print("Certificate renewed successfully.")
+        print(f"[{partner_id}] Certificate renewed successfully.")
+
 
 # Fetching environment variables or values from bootstrap.properties
 postgres_host = os.environ.get('db-host') or read_bootstrap_properties('db-host')
@@ -122,30 +123,70 @@ pre_expiry_days = os.environ.get('pre-expiry-days') or read_bootstrap_properties
 TOKEN = authenticate_and_get_token(base_url, client_secret)
 
 if TOKEN:
-    partner_ids = os.environ.get('PARTNER_IDS')
+    partner_ids = os.environ.get('PARTNER_IDS_ENV')
     if partner_ids:
         partner_ids = partner_ids.split(',')
+        print ("Getting list of partners from env variable")
     else:
         with open('partner.properties', 'r') as file:
             for line in file:
                 if line.startswith('PARTNER_ID'):
                     partner_ids = line.strip().split('=')[1].split(',')
+                    print ("Getting list of partners from local variable")
 
     for PARTNER_ID in partner_ids:
-        print(f"\nProcessing partner ID: {PARTNER_ID.strip()}")
+        PARTNER_ID = PARTNER_ID.strip()
+        print(f"\nProcessing partner ID: {PARTNER_ID}")
         try:
-            req = Request(f"https://{base_url}/v1/partnermanager/partners/{PARTNER_ID.strip()}/certificate",
-                          headers={"Content-Type": "application/json", "Cookie": f"Authorization={TOKEN}"},
-                          method="GET")
+            req = Request(
+                f"https://{base_url}/v1/partnermanager/partners/{PARTNER_ID}/certificate",
+                headers={"Content-Type": "application/json", "Cookie": f"Authorization={TOKEN}"},
+                method="GET"
+            )
             response = urlopen(req)
-            response_data = json.loads(response.read().decode('utf-8'))
-            CERTIFICATE_DATA = response_data.get('response', {}).get('certificateData')
+            raw_data = response.read().decode('utf-8')
+
+            try:
+                response_data = json.loads(raw_data)
+            except json.JSONDecodeError:
+                print(f"[{PARTNER_ID}] Invalid JSON response: {raw_data}")
+                continue
+
+            if not response_data or not isinstance(response_data, dict):
+                print(f"[{PARTNER_ID}] Invalid or empty response.")
+                continue
+
+            cert_info = response_data.get('response')
+            CERTIFICATE_DATA = cert_info.get('certificateData') if cert_info else None
+
+            if not CERTIFICATE_DATA:
+                print(f"[{PARTNER_ID}] Certificate data not found.")
+                continue
+
+
+            CERTIFICATE_DATA = cert_info.get('certificateData')
+            if not CERTIFICATE_DATA:
+                print(f"[{PARTNER_ID}] No certificate data found.")
+                continue
+
             expiration_date = os.popen(f"echo '{CERTIFICATE_DATA}' | openssl x509 -noout -enddate").read().split('=')[1].strip()
-            if is_certificate_expired(expiration_date) or (datetime.strptime(expiration_date, "%b %d %H:%M:%S %Y %Z") - datetime.utcnow()) <= timedelta(days=int(pre_expiry_days)):
-                write_to_expired_txt(PARTNER_ID.strip())
+            expiry_dt = datetime.strptime(expiration_date, "%b %d %H:%M:%S %Y %Z")
+            days_left = (expiry_dt - datetime.utcnow()).days
+
+            if is_certificate_expired(expiration_date) or days_left <= int(pre_expiry_days):
+                print(f"[{PARTNER_ID}] Certificate is expired or will expire in {days_left} day(s). Renewing...")
+                write_to_expired_txt(PARTNER_ID)
+            else:
+                print(f"[{PARTNER_ID}] Certificate is valid. {days_left} day(s) left.")
+
         except HTTPError as e:
-            print(f"Error fetching certificate for {PARTNER_ID}: {e}")
+            print(f"[{PARTNER_ID}] HTTP error while fetching certificate: {e}")
             continue
+        except Exception as e:
+            print(f"[{PARTNER_ID}] Unexpected error: {e}")
+            continue
+
+
 
     if os.path.exists("expired.txt"):
         with open("expired.txt", "r") as file:
