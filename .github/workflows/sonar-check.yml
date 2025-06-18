@@ -1,0 +1,41 @@
+name: SonarCloud PR Quality Gate
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  sonar_analysis:
+    name: maven-sonar-analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: 'temurin'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Run SonarCloud analysis
+        env:
+          SONAR_TOKEN: f4e496ee8ddc6661404844949201593f56078e94
+        run: |
+          mvn -B verify sonar:sonar -Dsonar.projectKey=mosip_security-tools -Dsonar.organization=mosip -Dsonar.host.url=https://sonarcloud.io -DskipSigning=true
