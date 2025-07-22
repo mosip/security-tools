@@ -1,0 +1,12 @@
+
+crontime: "0 3 * * *"    ## run cronjob every day at 3 AM (time hr: 0-23 )
+
+mosipcertmanager:
+  configmaps:
+    db:
+      db-port: '5432'
+      db-su-user: 'postgres'
+      db-host: 'postgres.soil.mosip.net'
+    mosipcertmanager:
+      pre-expiry-days: '40'
+

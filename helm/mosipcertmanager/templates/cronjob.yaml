@@ -47,11 +47,6 @@ spec:
             args: {{- include "common.tpvalues.render" (dict "value" .Values.args "context" $) | nindent 12 }}
             {{- end }}
             env:
-              - name: mosip_pms_client_secret
-                valueFrom:
-                  secretKeyRef:
-                    key: mosip_pms_client_secret
-                    name: keycloak-client-secrets
               - name: container_user
                 value: {{ .Values.containerSecurityContext.runAsUser }}
               {{- if .Values.extraEnvVars }}

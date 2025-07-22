@@ -27,7 +27,7 @@ function installing_mosipcertmanager() {
   ./copy_secrets.sh
 
   echo Installing mosipcertmanager
-  helm -n $NS install mosipcertmanager mosip/mosipcertmanager --wait --version $CHART_VERSION
+  helm -n $NS install mosipcertmanager . --wait --version $CHART_VERSION
   return 0
 }
 

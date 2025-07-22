@@ -9,7 +9,6 @@ function copying_secrets() {
   wget -q $UTIL_URL -O copy_cm_func.sh && chmod +x copy_cm_func.sh
 
   DST_NS=mosipcertmanager
-  $COPY_UTIL secret s3 s3 $DST_NS
   $COPY_UTIL secret postgres-postgresql postgres $DST_NS
   $COPY_UTIL secret keycloak-client-secrets keycloak $DST_NS
   return 0
