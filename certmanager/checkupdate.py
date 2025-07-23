@@ -248,13 +248,13 @@ if TOKEN:
         success = True
         if partner_id == 'mpartner-default-esignet':
             success = post_upload_to_system(f"https://{base_esignet_url}/v1/esignet/system-info/uploadCertificate", TOKEN, "OIDC_PARTNER", signed_cert, "", bearer=True)
-          if success:
-              if ns_esignet:
-                  subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", ns_esignet])
-              else:
-                  print("Environment variable 'ns_esignet' not set. Cannot restart esignet deployment.")
-          else:
-              print(f"[{partner_id}] Upload to Esignet failed. Skipping restart.")
+            if success:
+                if ns_esignet:
+                    subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", ns_esignet])
+                else:
+                    print("Environment variable 'ns_esignet' not set. Cannot restart esignet deployment.")
+            else:
+                print(f"[{partner_id}] Upload to Esignet failed. Skipping restart.")
         elif partner_id == 'mpartner-default-digitalcard':
             success = post_upload_to_system(f"https://{base_url}/v1/keymanager/uploadCertificate", TOKEN, "DIGITAL_CARD", signed_cert, partner_id)
         elif partner_id == 'mpartner-default-auth':

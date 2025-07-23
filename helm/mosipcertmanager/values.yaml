@@ -216,6 +216,7 @@ extraEnvVarsCM:
   - global
   - db
   - mosipcertmanager
+  - partner-ids-env
   - esignet-namespace
 ## Secret with extra environment variables
 ##
