@@ -3,13 +3,12 @@
 # DST_NS: Destination namespace
 
 function copying_secrets() {
-  UTIL_URL=https:https://raw.githubusercontent.com/mosip/mosip-infra/master/deployment/v3/utils/copy_cm_func.sh
+  UTIL_URL=https://raw.githubusercontent.com/mosip/mosip-infra/master/deployment/v3/utils/copy_cm_func.sh
   COPY_UTIL=./copy_cm_func.sh
 
   wget -q $UTIL_URL -O copy_cm_func.sh && chmod +x copy_cm_func.sh
 
   DST_NS=mosipcertmanager
-  $COPY_UTIL secret s3 s3 $DST_NS
   $COPY_UTIL secret postgres-postgresql postgres $DST_NS
   $COPY_UTIL secret keycloak-client-secrets keycloak $DST_NS
   return 0

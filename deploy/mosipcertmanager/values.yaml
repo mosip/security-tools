@@ -1,0 +1,14 @@
+
+crontime: "0 3 * * *"    ## run cronjob every day at 3 AM (time hr: 0-23 )
+
+mosipcertmanager:
+  configmaps:
+    db:
+      db-port: '5432'
+      db-su-user: 'postgres'
+      db-host: 'postgres.soil.mosip.net'
+    partner-ids-env:
+      PARTNER_IDS_ENV: mpartner-default-print,mpartner-default-abis,mpartner-default-mobile,mpartner-default-digitalcard,mpartner-default-auth,mpartner-default-resident,mpartner-default-demo-oidc,mpartner-default-resident-oidc,mpartner-default-mimotooidc,mpartner-default-esignet,mpartner-default-mimotokeybinding
+    mosipcertmanager:
+      pre-expiry-days: '40'
+

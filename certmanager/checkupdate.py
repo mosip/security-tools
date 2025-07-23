@@ -2,6 +2,7 @@ import os
 import json
 import psycopg2
 import requests
+import subprocess
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from datetime import datetime, timedelta, timezone
@@ -154,9 +155,10 @@ postgres_port = os.environ.get('db-port') or read_bootstrap_properties('db-port'
 postgres_user = os.environ.get('db-su-user') or read_bootstrap_properties('db-su-user')
 postgres_password = os.environ.get('postgres-password') or read_bootstrap_properties('postgres-password')
 base_url = os.environ.get('mosip-api-internal-host') or read_bootstrap_properties('mosip-api-internal-host')
-base_esignet_url = os.environ.get('mosip-api-external-host') or read_bootstrap_properties('mosip-api-external-host')
+base_esignet_url = os.environ.get('mosip-api-host') or read_bootstrap_properties('mosip-api-external-host')
 client_secret = os.environ.get('mosip_deployment_client_secret') or read_bootstrap_properties('mosip_deployment_client_secret')
 pre_expiry_days = int(os.environ.get('pre-expiry-days') or read_bootstrap_properties('pre-expiry-days'))
+ns_esignet = os.environ.get('ns_esignet')
 TOKEN = authenticate_and_get_token(base_url, client_secret)
 
 if TOKEN:
@@ -246,6 +248,13 @@ if TOKEN:
         success = True
         if partner_id == 'mpartner-default-esignet':
             success = post_upload_to_system(f"https://{base_esignet_url}/v1/esignet/system-info/uploadCertificate", TOKEN, "OIDC_PARTNER", signed_cert, "", bearer=True)
+            if success:
+                if ns_esignet:
+                    subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", ns_esignet], check=True)
+                else:
+                    print("Environment variable 'ns_esignet' not set. Cannot restart esignet deployment.")
+            else:
+                print(f"[{partner_id}] Upload to Esignet failed. Skipping restart.")
         elif partner_id == 'mpartner-default-digitalcard':
             success = post_upload_to_system(f"https://{base_url}/v1/keymanager/uploadCertificate", TOKEN, "DIGITAL_CARD", signed_cert, partner_id)
         elif partner_id == 'mpartner-default-auth':

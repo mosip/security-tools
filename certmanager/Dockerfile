@@ -14,6 +14,12 @@ ARG container_user_group=mosip
 ARG container_user_uid=1001
 ARG container_user_gid=1001
 
+# Install kubectl binary
+RUN apt-get -y update \
+ && apt-get install -y curl \
+ && curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+ && chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+
 # Create user group
 RUN groupadd -r ${container_user_group} && useradd -u ${container_user_uid} -r -g ${container_user_group} -s /bin/bash -m -d /home/${container_user} ${container_user}
 RUN chown -R ${container_user}:${container_user} /home/${container_user}
@@ -30,6 +36,7 @@ ENV db-server=
 ENV db-port=
 ENV db-su-user=
 ENV postgres-password=
+ENV ns_esignet=esignet
 
 COPY partner.properties .
 COPY requirements.txt .
