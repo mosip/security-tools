@@ -30,6 +30,7 @@ spec:
         spec:
           # account configured above
           restartPolicy: Never
+          serviceAccountName: {{ template "mosipcertmanager.serviceAccountName" $ }}
           containers:
           - name: {{ template "mosipcertmanager.serviceAccountName" $ }}
             image: {{ template "mosipcertmanager.image" $ }}

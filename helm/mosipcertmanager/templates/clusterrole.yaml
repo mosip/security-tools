@@ -1,10 +1,8 @@
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ template "mosipcertmanager.serviceAccountName" . }}-{{ .Release.Namespace }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ .Release.Name }}-deployment-clusterrole
 rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get","patch","list","watch"]
+    verbs: ["get", "patch", "list", "watch"]
