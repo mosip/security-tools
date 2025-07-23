@@ -250,7 +250,7 @@ if TOKEN:
             success = post_upload_to_system(f"https://{base_esignet_url}/v1/esignet/system-info/uploadCertificate", TOKEN, "OIDC_PARTNER", signed_cert, "", bearer=True)
             if success:
                 if ns_esignet:
-                    subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", ns_esignet])
+                    subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", ns_esignet], check=True)
                 else:
                     print("Environment variable 'ns_esignet' not set. Cannot restart esignet deployment.")
             else:
