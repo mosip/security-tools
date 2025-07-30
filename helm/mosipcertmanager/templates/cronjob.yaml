@@ -66,6 +66,3 @@ spec:
                         name: {{ . }}
                 {{- end }}
                 {{- end }}
-            ports:
-                - name: spring-service
-                  containerPort: {{ .Values.springServicePort }}
