@@ -67,7 +67,7 @@ image:
   #   - myRegistryKeySecretName
 
 ## Port on which this particular spring service module is running.
-springServicePort: 8083
+# springServicePort: 8083
 
 ## Configure extra options for liveness and readiness probes
 ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-probes/#configure-probes
@@ -88,17 +88,17 @@ hostAliases: []
 
 ## ref: http://kubernetes.io/docs/user-guide/compute-resources/
 ##
-resources:
+# resources:
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
   # resources, such as Minikube. If you do want to specify resources, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  limits:
-    cpu: 1000m
-    memory: 3500Mi
-  requests:
-    cpu: 1000m
-    memory: 3500Mi
+ # limits:
+  ##  cpu: 1000m
+   ## memory: 3500Mi
+ # requests:
+  ##  cpu: 1000m
+  #  memory: 3500Mi
 
 additionalResources:
   ## Specify any JAVA_OPTS string here. These typically will be specified in conjunction with above resources
@@ -242,38 +242,6 @@ extraVolumeMounts: []
 ##       - name: portname
 ##         containerPort: 1234
 ##
-initContainers:
-  - command:
-      - /bin/bash
-      - -c
-      - if [ "$ENABLE_INSECURE" = "true" ]; then HOST=$( env | grep "mosip-api-internal-host"
-        |sed "s/mosip-api-internal-host=//g"); if [ -z "$HOST" ]; then echo "HOST
-        $HOST is empty; EXITING"; exit 1; fi; openssl s_client -servername "$HOST"
-        -connect "$HOST":443  > "$HOST.cer" 2>/dev/null & sleep 2 ; sed -i -ne '/-BEGIN
-        CERTIFICATE-/,/-END CERTIFICATE-/p' "$HOST.cer"; cat "$HOST.cer"; /usr/local/openjdk-11/bin/keytool
-        -delete -alias "$HOST" -keystore $JAVA_HOME/lib/security/cacerts  -storepass
-        changeit; /usr/local/openjdk-11/bin/keytool -trustcacerts -keystore "$JAVA_HOME/lib/security/cacerts"
-        -storepass changeit -noprompt -importcert -alias "$HOST" -file "$HOST.cer"
-        ; if [ $? -gt 0 ]; then echo "Failed to add SSL certificate for host $host;
-        EXITING"; exit 1; fi; cp /usr/local/openjdk-11/lib/security/cacerts /cacerts;
-        fi
-    env:
-      - name: ENABLE_INSECURE
-        value: "true"
-    envFrom:
-      - configMapRef:
-          name: global
-    image: docker.io/openjdk:11-jre
-    imagePullPolicy: Always
-    name: cacerts
-    resources: {}
-    securityContext:
-      runAsUser: 0
-    terminationMessagePath: /dev/termination-log
-    terminationMessagePolicy: File
-    volumeMounts:
-      - mountPath: /cacerts
-        name: cacerts
 
 ## Add sidecars to the  pods.
 ## Example:
@@ -287,36 +255,12 @@ initContainers:
 ##
 sidecars: {}
 
-persistence:
-  enabled: true
-  ## If defined, storageClassName: <storageClass>
-  ## If set to "-", storageClassName: "", which disables dynamic provisioning
-  ## If undefined (the default) or set to null, no storageClassName spec is
-  ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
-  ##   GKE, AWS & OpenStack).
-  ##
-  # storageClass: "-"
-  ##
-  ## If you want to reuse an existing claim, you can pass the name of the PVC using
-  ## the existingClaim variable
-  # existingClaim: your-claim
-  ## ReadWriteMany not supported by AWS gp2
-  storageClass:
-  accessModes:
-    - ReadWriteOnce
-  size: 100m
-  existingClaim:
-  nfs:
-    path: '/srv/nfs/mosip/dsl-scenarios/<sandbox.xyz.net>'
-    server: ''
-  # Dir where config and keys are written inside container
-  mountDir: '/home/mosip/mountvolume/scenarios'
 
 ## Init containers parameters:
 ## volumePermissions: Change the owner and group of the persistent volume mountpoint to runAsUser:fsGroup values from the securityContext section.
 ##
 volumePermissions:
-  enabled: true
+  enabled: false
   image:
     registry: docker.io
     repository: bitnami/bitnami-shell
