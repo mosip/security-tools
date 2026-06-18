@@ -17,6 +17,116 @@ def read_bootstrap_properties(key):
                 return line.split('=')[1].strip()
     return None
 
+# Function to build partner to instance mapping 
+def load_partner_instance_mapping():
+
+    esignet_mapping = {}
+    inji_mapping = {}
+
+    config_lines = []
+
+    # Load from env first
+    for key, value in os.environ.items():
+
+        if (
+            key.startswith("ESIGNET_INSTANCE_")
+            and key.endswith("_PARTNERS")
+        ):
+            config_lines.append(f"{key}={value}")
+
+        elif (
+            key.startswith("INJI_INSTANCE_")
+            and key.endswith("_PARTNERS")
+        ):
+            config_lines.append(f"{key}={value}")
+
+    # Fallback to local file if env not provided
+    if not config_lines:
+        with open("partner.properties", "r") as file:
+            config_lines = file.readlines()
+
+    for line in config_lines:
+
+        line = line.strip()
+
+        if (
+            line.startswith("ESIGNET_INSTANCE_")
+            and "_PARTNERS=" in line
+        ):
+
+            instance_id = (
+                line.split("=")[0]
+                .replace("_PARTNERS", "")
+            )
+
+            partner_ids = [
+                pid.strip()
+                for pid in line.split("=")[1].split(",")
+                if pid.strip()
+            ]
+
+            url = (
+                os.environ.get(f"{instance_id}_URL")
+                or read_bootstrap_properties(
+                    f"{instance_id}_URL"
+                )
+            )
+
+            namespace = (
+                os.environ.get(
+                    f"{instance_id}_NAMESPACE"
+                )
+                or read_bootstrap_properties(
+                    f"{instance_id}_NAMESPACE"
+                )
+            )
+
+            for partner_id in partner_ids:
+                esignet_mapping[partner_id] = {
+                    "url": url,
+                    "namespace": namespace
+                }
+
+        elif (
+            line.startswith("INJI_INSTANCE_")
+            and "_PARTNERS=" in line
+        ):
+
+            instance_id = (
+                line.split("=")[0]
+                .replace("_PARTNERS", "")
+            )
+
+            partner_ids = [
+                pid.strip()
+                for pid in line.split("=")[1].split(",")
+                if pid.strip()
+            ]
+
+            url = (
+                os.environ.get(f"{instance_id}_URL")
+                or read_bootstrap_properties(
+                    f"{instance_id}_URL"
+                )
+            )
+
+            namespace = (
+                os.environ.get(
+                    f"{instance_id}_NAMESPACE"
+                )
+                or read_bootstrap_properties(
+                    f"{instance_id}_NAMESPACE"
+                )
+            )
+
+            for partner_id in partner_ids:
+                inji_mapping[partner_id] = {
+                    "url": url,
+                    "namespace": namespace
+                }
+
+    return esignet_mapping, inji_mapping    
+
 # Function to check if certificate is expired
 def is_certificate_expired(expiration_date):
     expiration_date = datetime.strptime(expiration_date, "%b %d %H:%M:%S %Y %Z")
@@ -158,9 +268,7 @@ def authenticate_and_get_token(base_url, client_secret):
         return None
 
     except requests.exceptions.RequestException as e:
-        print(
-            f"Authentication request failed: {str(e)}"
-        )
+        print(f"Authentication request failed: {str(e)}")
         return None
 
     if response.status_code == 200:
@@ -185,8 +293,7 @@ def authenticate_and_get_token(base_url, client_secret):
 
 # Function to upload certificate
 # Returns signedCertificateData if successful
-def upload_certificate_with_token(token, cert_data, partner_id, base_url, esignet_partner_ids, inji_certify_partner_ids):
-
+def upload_certificate_with_token(token, cert_data, partner_id, base_url, esignet_mapping, inji_mapping):
     upload_url = (
         f"https://{base_url}"
         f"/v1/partnermanager/partners/certificate/upload"
@@ -197,7 +304,7 @@ def upload_certificate_with_token(token, cert_data, partner_id, base_url, esigne
         "Cookie": f"Authorization={token}"
     }
 
-    special_partners = set(esignet_partner_ids + inji_certify_partner_ids)
+    special_partners = set(list(esignet_mapping.keys()) + list(inji_mapping.keys()))
     partner_domain = ("MISP" if partner_id in special_partners else "AUTH")
 
     upload_data = {
@@ -440,18 +547,18 @@ postgres_password = os.environ.get('postgres-password') or read_bootstrap_proper
 partnermanager_base_url = (os.environ.get('PARTNERMANAGER_BASE_URL') or read_bootstrap_properties('PARTNERMANAGER_BASE_URL'))
 keymanager_base_url = (os.environ.get('KEYMANAGER_BASE_URL') or read_bootstrap_properties('KEYMANAGER_BASE_URL'))
 ida_base_url = (os.environ.get('IDA_BASE_URL')or read_bootstrap_properties('IDA_BASE_URL'))
-esignet_base_url = (os.environ.get('ESIGNET_BASE_URL') or read_bootstrap_properties('ESIGNET_BASE_URL'))
-inji_certify_base_url = (os.environ.get('INJI_CERTIFY_BASE_URL')or read_bootstrap_properties('INJI_CERTIFY_BASE_URL'))
+
+# esignet_base_url = (os.environ.get('ESIGNET_BASE_URL') or read_bootstrap_properties('ESIGNET_BASE_URL'))
+# inji_certify_base_url = (os.environ.get('INJI_CERTIFY_BASE_URL')or read_bootstrap_properties('INJI_CERTIFY_BASE_URL'))
 
 client_secret = os.environ.get('mosip_deployment_client_secret') or read_bootstrap_properties('mosip_deployment_client_secret')
 pre_expiry_days = int(os.environ.get('pre-expiry-days') or read_bootstrap_properties('pre-expiry-days'))
-ns_esignet = os.environ.get('ns_esignet')
+# ns_esignet = os.environ.get('ns_esignet')
 TOKEN = authenticate_and_get_token(partnermanager_base_url, client_secret)
 
 if TOKEN:
     partner_ids = os.environ.get('PARTNER_IDS_ENV')
-    esignet_partner_ids = os.environ.get('ESIGNET_PARTNER_IDS_ENV')
-    inji_certify_partner_ids = os.environ.get('INJI_CERTIFY_PARTNER_IDS_ENV')
+    esignet_mapping, inji_mapping = (load_partner_instance_mapping())
 
     if partner_ids:
         partner_ids = [
@@ -459,31 +566,10 @@ if TOKEN:
             for pid in partner_ids.split(',')
             if pid.strip()
         ]
-
-        if esignet_partner_ids:
-            esignet_partner_ids = [
-                pid.strip()
-                for pid in esignet_partner_ids.split(',')
-                if pid.strip()
-            ]
-        else:
-            esignet_partner_ids = []
-        
-        if inji_certify_partner_ids:
-            inji_certify_partner_ids = [
-                pid.strip()
-                for pid in inji_certify_partner_ids.split(',')
-                if pid.strip()
-            ]
-        else:
-            inji_certify_partner_ids = []
-
         print("Getting list of partners from env variable")
 
     else:
         partner_ids = []
-        esignet_partner_ids = []
-        inji_certify_partner_ids = []
 
         with open('partner.properties', 'r') as file:
             for line in file:
@@ -494,20 +580,7 @@ if TOKEN:
                         for pid in line.strip().split('=')[1].split(',')
                         if pid.strip()
                     ]
-
-                elif line.startswith('ESIGNET_PARTNER_ID'):
-                    esignet_partner_ids = [
-                        pid.strip()
-                        for pid in line.strip().split('=')[1].split(',')
-                        if pid.strip()
-                    ]
-
-                elif line.startswith('INJI_CERTIFY_PARTNER_ID'):
-                    inji_certify_partner_ids = [
-                        pid.strip()
-                        for pid in line.strip().split('=')[1].split(',')
-                        if pid.strip()
-                    ]
+                    break
 
         print("Getting list of partners from local variable")
     
@@ -523,7 +596,7 @@ if TOKEN:
                 headers={"Content-Type": "application/json", "Cookie": f"Authorization={TOKEN}"},
                 method="GET"
             )
-            response = urlopen(req)
+            response = urlopen(req, timeout = REQUEST_TIMEOUT)
             raw_data = response.read().decode('utf-8')
             try:
                 response_data = json.loads(raw_data)
@@ -587,34 +660,42 @@ if TOKEN:
             cert_data, 
             partner_id, 
             partnermanager_base_url,
-            esignet_partner_ids,
-            inji_certify_partner_ids
+            esignet_mapping,
+            inji_mapping
         )
         if not signed_cert:
             continue
 
         # Post-upload to relevant systems
         success = True
-        if partner_id in esignet_partner_ids:
-            success = post_upload_to_system(f"https://{esignet_base_url}/v1/esignet/system-info/uploadCertificate", TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True)
+
+        if partner_id in esignet_mapping:
+            instance = esignet_mapping[partner_id]
+            esignet_url = instance["url"]
+
+            success = post_upload_to_system(f"https://{esignet_url}" "/v1/esignet/system-info/uploadCertificate", TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True)
 
             if success:
-                if ns_esignet:
-                    try:
-                        subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", ns_esignet], check = True)
-                    except Exception as e:
-                       print(
-                            f"[{partner_id}] "
-                            f"Failed to restart esignet: {e}"
-                        )
+                namespace = instance["namespace"]
+                try:
+                    subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", namespace], check = True)
+                except Exception as e:
+                    print(
+                        f"[{partner_id}] "
+                        f"Failed to restart esignet: {e}"
+                        f"namespace {namespace}: {e}"
+                    )
     
-                else:
-                    print("Environment variable 'ns_esignet' not set. Cannot restart esignet deployment.")
+                #else:
+                #    print("Environment variable 'ns_esignet' not set. Cannot restart esignet deployment.")
             #else:
             #    print(f"[{partner_id}] Upload to Esignet failed. Skipping restart.")
 
-        elif partner_id in inji_certify_partner_ids:
-            success = post_upload_to_system(f"https://{inji_certify_base_url}/v1/certify/system-info/uploadCertificate",
+        elif partner_id in inji_mapping:
+            instance = inji_mapping[partner_id]
+            inji_url = instance["url"]
+
+            success = post_upload_to_system(f"https://{inji_url}" "/v1/certify/system-info/uploadCertificate",
                 TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True)
 
             #if not success:
@@ -629,8 +710,9 @@ if TOKEN:
         elif partner_id == 'mpartner-default-resident':
             success = post_upload_to_system(f"https://{keymanager_base_url}/v1/keymanager/uploadCertificate", TOKEN, "RESIDENT", signed_cert, partner_id, partner_id)
         
-        if success or (partner_id not in (esignet_partner_ids + inji_certify_partner_ids)
-                      and partner_id not in ['mpartner-default-digitalcard',
+        if success or (partner_id not in esignet_mapping
+                       and partner_id not in inji_mapping
+                       and partner_id not in ['mpartner-default-digitalcard',
                                              'mpartner-default-auth',
                                              'mpartner-default-resident']
         ):
