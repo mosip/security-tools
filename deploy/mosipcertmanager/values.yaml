@@ -7,26 +7,15 @@ mosipcertmanager:
       db-port: '5432'
       db-su-user: 'postgres'
       db-host: 'postgres.sandbox.mosip.net'
+
     partner-ids-env:
-      PARTNER_IDS_ENV: mpartner-default-print,mpartner-default-abis,mpartner-default-mobile,mpartner-default-digitalcard,mpartner-default-auth,mpartner-default-resident,mpartner-default-demo-oidc,mpartner-default-resident-oidc,mpartner-default-mimotooidc,mpartner-default-esignet,mpartner-default-mimotokeybinding
-    
+      PARTNER_IDS_ENV: 
+        
     esignet-instance-config:
-      ESIGNET_INSTANCE_1_PARTNERS: mpartner-default-esignet
-      ESIGNET_INSTANCE_1_URL: esignet.soil01.mosip.net
-      ESIGNET_INSTANCE_1_NAMESPACE: esignet
+      ESIGNET_INSTANCES: ""
 
-      ESIGNET_INSTANCE_2_PARTNERS: mpartner-default-demo-oidc
-      ESIGNET_INSTANCE_2_URL: esignet-mock.soil01.mosip.net
-      ESIGNET_INSTANCE_2_NAMESPACE: esignet-mock
-    
     inji-instance-config:
-      INJI_INSTANCE_1_PARTNERS: inji-1
-      INJI_INSTANCE_1_URL: certify.soil01.mosip.net
-      INJI_INSTANCE_1_NAMESPACE: certify
-
-      INJI_INSTANCE_2_PARTNERS: inji-2
-      INJI_INSTANCE_2_URL: certify-mock.soil01.mosip.net
-      INJI_INSTANCE_2_NAMESPACE: certify-mock
+      INJI_INSTANCES: ""
       
     mosipcertmanager:
       pre-expiry-days: '40'

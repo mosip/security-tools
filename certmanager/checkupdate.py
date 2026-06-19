@@ -13,119 +13,148 @@ REQUEST_TIMEOUT = 30
 def read_bootstrap_properties(key):
     with open('bootstrap.properties', 'r') as file:
         for line in file:
-            if line.startswith(key):
-                return line.split('=')[1].strip()
+            if line.startswith(key) and '=' in line:
+                return line.split('=', 1)[1].strip()
     return None
 
 # Function to build partner to instance mapping 
 def load_partner_instance_mapping():
-
     esignet_mapping = {}
     inji_mapping = {}
 
-    config_lines = []
+    try:
+        esignet_instances = json.loads(os.environ.get("ESIGNET_INSTANCES", "{}"))
 
-    # Load from env first
-    for key, value in os.environ.items():
-
-        if (
-            key.startswith("ESIGNET_INSTANCE_")
-            and key.endswith("_PARTNERS")
-        ):
-            config_lines.append(f"{key}={value}")
-
-        elif (
-            key.startswith("INJI_INSTANCE_")
-            and key.endswith("_PARTNERS")
-        ):
-            config_lines.append(f"{key}={value}")
-
-    # Fallback to local file if env not provided
-    if not config_lines:
-        with open("partner.properties", "r") as file:
-            config_lines = file.readlines()
-
-    for line in config_lines:
-
-        line = line.strip()
-
-        if (
-            line.startswith("ESIGNET_INSTANCE_")
-            and "_PARTNERS=" in line
-        ):
-
-            instance_id = (
-                line.split("=")[0]
-                .replace("_PARTNERS", "")
+        if not isinstance(esignet_instances, dict):
+            print(
+                "[CONFIG ERROR] "
+                "ESIGNET_INSTANCES "
+                "must be a JSON object."
             )
+            esignet_instances = {}
 
-            partner_ids = [
-                pid.strip()
-                for pid in line.split("=")[1].split(",")
-                if pid.strip()
-            ]
+    except Exception as e:
+        print(
+            f"[CONFIG ERROR] "
+            f"Failed to parse "
+            f"ESIGNET_INSTANCES: {e}"
+        )
+        esignet_instances = {}
 
-            url = (
-                os.environ.get(f"{instance_id}_URL")
-                or read_bootstrap_properties(
-                    f"{instance_id}_URL"
-                )
+    try:
+        inji_instances = json.loads(os.environ.get("INJI_INSTANCES", "{}"))
+
+        if not isinstance(inji_instances, dict):
+            print(
+                "[CONFIG ERROR] "
+                "INJI_INSTANCES "
+                "must be a JSON object."
             )
+            inji_instances = {}
 
-            namespace = (
-                os.environ.get(
-                    f"{instance_id}_NAMESPACE"
-                )
-                or read_bootstrap_properties(
-                    f"{instance_id}_NAMESPACE"
-                )
+    except Exception as e:
+        print(
+            f"[CONFIG ERROR] "
+            f"Failed to parse "
+            f"INJI_INSTANCES: {e}"
+        )
+        inji_instances = {}
+
+    for instance_name, config in (esignet_instances.items()):
+        if not isinstance(config, dict):
+            print(
+                f"[CONFIG ERROR] "
+                f"Invalid configuration for "
+                f"eSignet instance "
+                f"'{instance_name}'"
             )
+            continue
 
-            for partner_id in partner_ids:
-                esignet_mapping[partner_id] = {
-                    "url": url,
-                    "namespace": namespace
-                }
+        url = config.get("url")
+        namespace = config.get("namespace")
+        partners = config.get("partners", [])
 
-        elif (
-            line.startswith("INJI_INSTANCE_")
-            and "_PARTNERS=" in line
-        ):
-
-            instance_id = (
-                line.split("=")[0]
-                .replace("_PARTNERS", "")
+        if not url:
+            print(
+                f"[CONFIG ERROR] "
+                f"URL missing for "
+                f"eSignet instance "
+                f"'{instance_name}'"
             )
+            continue
 
-            partner_ids = [
-                pid.strip()
-                for pid in line.split("=")[1].split(",")
-                if pid.strip()
-            ]
-
-            url = (
-                os.environ.get(f"{instance_id}_URL")
-                or read_bootstrap_properties(
-                    f"{instance_id}_URL"
-                )
+        if not namespace:
+            print(
+                f"[CONFIG ERROR] "
+                f"Namespace missing for "
+                f"eSignet instance "
+                f"'{instance_name}'"
             )
+            continue
 
-            namespace = (
-                os.environ.get(
-                    f"{instance_id}_NAMESPACE"
-                )
-                or read_bootstrap_properties(
-                    f"{instance_id}_NAMESPACE"
-                )
+        if not isinstance(partners, list):
+            print(
+                f"[CONFIG ERROR] "
+                f"Partners must be a list "
+                f"for eSignet instance "
+                f"'{instance_name}'"
             )
+            continue
 
-            for partner_id in partner_ids:
-                inji_mapping[partner_id] = {
-                    "url": url,
-                    "namespace": namespace
-                }
+        for partner_id in partners:
+            esignet_mapping[partner_id] = {
+                "url": url,
+                "namespace": namespace
+            }
 
-    return esignet_mapping, inji_mapping    
+    for instance_name, config in (inji_instances.items()):
+        if not isinstance(config, dict):
+            print(
+                f"[CONFIG ERROR] "
+                f"Invalid configuration for "
+                f"Inji instance "
+                f"'{instance_name}'"
+            )
+            continue
+
+        url = config.get("url")
+        namespace = config.get("namespace")
+        partners = config.get("partners", [])
+
+        if not url:
+            print(
+                f"[CONFIG ERROR] "
+                f"URL missing for "
+                f"Inji instance "
+                f"'{instance_name}'"
+            )
+            continue
+
+        if not namespace:
+            print(
+                f"[CONFIG ERROR] "
+                f"Namespace missing for "
+                f"Inji instance "
+                f"'{instance_name}'"
+            )
+            continue
+
+        if not isinstance(partners,list):
+            print(
+                f"[CONFIG ERROR] "
+                f"Partners must be a list "
+                f"for Inji instance "
+                f"'{instance_name}'"
+            )
+            continue
+
+        for partner_id in partners:
+            inji_mapping[partner_id] = {
+                "url": url,
+                "namespace": namespace
+            }
+
+    return (esignet_mapping,inji_mapping)
 
 # Function to check if certificate is expired
 def is_certificate_expired(expiration_date):
@@ -140,6 +169,8 @@ def write_to_expired_txt(cert_name):
 
 # Function to format certificate data
 def format_certificate(cert_data):
+    if not cert_data:
+        return None
     return cert_data.replace("\n", "\\n")
 
 # Function to retrieve certificate data from the database
@@ -557,8 +588,9 @@ pre_expiry_days = int(os.environ.get('pre-expiry-days') or read_bootstrap_proper
 TOKEN = authenticate_and_get_token(partnermanager_base_url, client_secret)
 
 if TOKEN:
+    esignet_mapping, inji_mapping = load_partner_instance_mapping()
+
     partner_ids = os.environ.get('PARTNER_IDS_ENV')
-    esignet_mapping, inji_mapping = (load_partner_instance_mapping())
 
     if partner_ids:
         partner_ids = [
@@ -566,14 +598,11 @@ if TOKEN:
             for pid in partner_ids.split(',')
             if pid.strip()
         ]
-        print("Getting list of partners from env variable")
 
     else:
         partner_ids = []
-
         with open('partner.properties', 'r') as file:
             for line in file:
-
                 if line.startswith('PARTNER_ID'):
                     partner_ids = [
                         pid.strip()
@@ -581,9 +610,7 @@ if TOKEN:
                         if pid.strip()
                     ]
                     break
-
-        print("Getting list of partners from local variable")
-    
+        
     if os.path.exists("expired.txt"):
         os.remove("expired.txt")
 
@@ -682,12 +709,10 @@ if TOKEN:
                 except Exception as e:
                     print(
                         f"[{partner_id}] "
-                        f"Failed to restart esignet: {e}"
-                        f"namespace {namespace}: {e}"
+                        f"Failed to restart deployment "
+                        f"in namespace '{namespace}': {e}"
                     )
     
-                #else:
-                #    print("Environment variable 'ns_esignet' not set. Cannot restart esignet deployment.")
             #else:
             #    print(f"[{partner_id}] Upload to Esignet failed. Skipping restart.")
 
