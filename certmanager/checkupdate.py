@@ -17,13 +17,31 @@ def read_bootstrap_properties(key):
                 return line.split('=', 1)[1].strip()
     return None
 
+# Helper function for local file fallback
+def read_partner_properties(key):
+    try:
+        with open("partner.properties", "r") as file:
+            for line in file:
+                if line.startswith(key):
+                    return line.split("=", 1)[1].strip()
+
+    except FileNotFoundError:
+        return None
+
+    return None
+
 # Function to build partner to instance mapping 
 def load_partner_instance_mapping():
     esignet_mapping = {}
     inji_mapping = {}
 
     try:
-        esignet_instances = json.loads(os.environ.get("ESIGNET_INSTANCES", "{}"))
+        esignet_json = (
+            os.environ.get("ESIGNET_INSTANCES")
+            or read_partner_properties("ESIGNET_INSTANCES")
+            or "{}"
+        )
+        esignet_instances = json.loads(esignet_json)
 
         if not isinstance(esignet_instances, dict):
             print(
@@ -42,7 +60,12 @@ def load_partner_instance_mapping():
         esignet_instances = {}
 
     try:
-        inji_instances = json.loads(os.environ.get("INJI_INSTANCES", "{}"))
+        inji_json = (
+            os.environ.get("INJI_INSTANCES")
+            or read_partner_properties("INJI_INSTANCES")
+            or "{}"
+        )
+        inji_instances = json.loads(inji_json)
 
         if not isinstance(inji_instances, dict):
             print(
@@ -73,6 +96,16 @@ def load_partner_instance_mapping():
         url = config.get("url")
         namespace = config.get("namespace")
         partners = config.get("partners", [])
+        deployment = config.get("deployment")
+
+        if not deployment:
+            print(
+                f"[CONFIG ERROR] "
+                f"Deployment missing for "
+                f"eSignet instance "
+                f"'{instance_name}'"
+            )
+            continue
 
         if not url:
             print(
@@ -104,7 +137,8 @@ def load_partner_instance_mapping():
         for partner_id in partners:
             esignet_mapping[partner_id] = {
                 "url": url,
-                "namespace": namespace
+                "namespace": namespace,
+                "deployment": deployment
             }
 
     for instance_name, config in (inji_instances.items()):
@@ -120,7 +154,17 @@ def load_partner_instance_mapping():
         url = config.get("url")
         namespace = config.get("namespace")
         partners = config.get("partners", [])
+        deployment = config.get("deployment")
 
+        if not deployment:
+            print(
+                f"[CONFIG ERROR] "
+                f"Deployment missing for "
+                f"Inji instance "
+                f"'{instance_name}'"
+            )
+            continue
+            
         if not url:
             print(
                 f"[CONFIG ERROR] "
@@ -139,7 +183,7 @@ def load_partner_instance_mapping():
             )
             continue
 
-        if not isinstance(partners,list):
+        if not isinstance(partners, list):
             print(
                 f"[CONFIG ERROR] "
                 f"Partners must be a list "
@@ -151,7 +195,8 @@ def load_partner_instance_mapping():
         for partner_id in partners:
             inji_mapping[partner_id] = {
                 "url": url,
-                "namespace": namespace
+                "namespace": namespace,
+                "deployment": deployment
             }
 
     return (esignet_mapping,inji_mapping)
@@ -699,13 +744,14 @@ if TOKEN:
         if partner_id in esignet_mapping:
             instance = esignet_mapping[partner_id]
             esignet_url = instance["url"]
+            deployment = instance["deployment"]
 
             success = post_upload_to_system(f"https://{esignet_url}" "/v1/esignet/system-info/uploadCertificate", TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True)
 
             if success:
                 namespace = instance["namespace"]
                 try:
-                    subprocess.run(["kubectl", "rollout", "restart", "deployment", "esignet", "-n", namespace], check = True)
+                    subprocess.run(["kubectl", "rollout", "restart", "deployment", deployment, "-n", namespace], check = True)
                 except Exception as e:
                     print(
                         f"[{partner_id}] "
@@ -719,6 +765,7 @@ if TOKEN:
         elif partner_id in inji_mapping:
             instance = inji_mapping[partner_id]
             inji_url = instance["url"]
+            deployment = instance["deployment"]
 
             success = post_upload_to_system(f"https://{inji_url}" "/v1/certify/system-info/uploadCertificate",
                 TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True)
