@@ -9,14 +9,14 @@ mosipcertmanager:
       db-host: 'postgres.sandbox.mosip.net'
 
     partner-ids-env:
-      PARTNER_IDS_ENV: 
-        
+      PARTNER_IDS_ENV:
+
     esignet-instance-config:
       ESIGNET_INSTANCES: ""
 
     inji-instance-config:
       INJI_INSTANCES: ""
-      
+
     mosipcertmanager:
       pre-expiry-days: '40'
 
