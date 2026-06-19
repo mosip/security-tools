@@ -7,8 +7,16 @@ mosipcertmanager:
       db-port: '5432'
       db-su-user: 'postgres'
       db-host: 'postgres.sandbox.mosip.net'
+
     partner-ids-env:
-      PARTNER_IDS_ENV: mpartner-default-print,mpartner-default-abis,mpartner-default-mobile,mpartner-default-digitalcard,mpartner-default-auth,mpartner-default-resident,mpartner-default-demo-oidc,mpartner-default-resident-oidc,mpartner-default-mimotooidc,mpartner-default-esignet,mpartner-default-mimotokeybinding
+      PARTNER_IDS_ENV: 
+        
+    esignet-instance-config:
+      ESIGNET_INSTANCES: ""
+
+    inji-instance-config:
+      INJI_INSTANCES: ""
+      
     mosipcertmanager:
       pre-expiry-days: '40'
 
