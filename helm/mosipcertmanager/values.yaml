@@ -377,6 +377,10 @@ mosipcertmanager:
     mosipcertmanager:
       pre-expiry-days: '40'
       
+      PARTNERMANAGER_BASE_URL: ""
+      KEYMANAGER_BASE_URL: ""
+      IDA_BASE_URL: ""
+      
     partner-ids-env:
       PARTNER_IDS_ENV: 
       
