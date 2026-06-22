@@ -24,16 +24,18 @@ on:
 jobs:
   build-dockers:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - SERVICE_LOCATION: 'databreachdetector'
             SERVICE_NAME: 'databreachdetector'
+            ONLY_DOCKER: false
           - SERVICE_LOCATION: 'certmanager'
             SERVICE_NAME: 'certmanager'
+            ONLY_DOCKER: true
           - SERVICE_LOCATION: 'auditsweeper'
             SERVICE_NAME: 'auditsweeper'
-            ONLY_DOCKER: true
-      fail-fast: false
+            ONLY_DOCKER: false
     name: ${{ matrix.SERVICE_NAME }}
     uses: mosip/kattu/.github/workflows/docker-build.yml@master
     with:
