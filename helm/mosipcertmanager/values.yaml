@@ -219,7 +219,7 @@ extraEnvVarsCM:
   - partner-ids-env
   - esignet-instance-config
   - inji-instance-config
-  
+
 ## Secret with extra environment variables
 ##
 extraEnvVarsSecret:
@@ -376,14 +376,18 @@ mosipcertmanager:
 
     mosipcertmanager:
       pre-expiry-days: '40'
-      
+
+      PARTNERMANAGER_BASE_URL: ""
+      KEYMANAGER_BASE_URL: ""
+      IDA_BASE_URL: ""
+
     partner-ids-env:
-      PARTNER_IDS_ENV: 
-      
+      PARTNER_IDS_ENV:
+
     esignet-instance-config:
       ESIGNET_INSTANCES: ""
-    
+
     inji-instance-config:
-       INJI_INSTANCES: ""
+      INJI_INSTANCES: ""
 
 enable_insecure: false
