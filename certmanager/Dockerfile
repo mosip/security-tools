@@ -36,7 +36,7 @@ ENV db-server=
 ENV db-port=
 ENV db-su-user=
 ENV postgres-password=
-ENV ns_esignet=esignet
+ENV PYTHONUNBUFFERED=1
 
 COPY partner.properties .
 COPY requirements.txt .
