@@ -1,387 +1,292 @@
 import os
+import sys
 import json
 import psycopg2
 import requests
 import subprocess
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
 from datetime import datetime, timezone
 
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 120
 
-# Function to read value from bootstrap.properties
+def validate_configuration():
+    required_env_vars = [
+        "PARTNERMANAGER_BASE_URL",
+        "KEYMANAGER_BASE_URL",
+        "IDA_BASE_URL",
+        "db-host",
+        "db-port",
+        "db-su-user",
+        "postgres-password",
+        "mosip_pms_client_secret",
+        "pre-expiry-days",
+    ]
+
+    present = [var for var in required_env_vars if os.environ.get(var)]
+
+    if len(present) == len(required_env_vars):
+        print("[CONFIG] Source: environment variables")
+        return "env"
+
+    if len(present) == 0:
+        print("[CONFIG] Source: properties files (no environment variables detected)")
+        return "file"
+
+    missing = [var for var in required_env_vars if not os.environ.get(var)]
+    print("[CONFIG ERROR] Partial environment configuration detected.")
+    print(f"[CONFIG ERROR] Missing variables: {', '.join(missing)}")
+    sys.exit(1)
+
+
+def validate_bootstrap_properties():
+    required_properties = [
+        "PARTNERMANAGER_BASE_URL",
+        "KEYMANAGER_BASE_URL",
+        "IDA_BASE_URL",
+        "db-host",
+        "db-port",
+        "db-su-user",
+        "postgres-password",
+        "mosip_pms_client_secret",
+        "pre-expiry-days",
+    ]
+
+    missing = [key for key in required_properties if not read_bootstrap_properties(key)]
+
+    if missing:
+        print("[CONFIG ERROR] Missing entries in bootstrap.properties:")
+        for item in missing:
+            print(f"  - {item}")
+        sys.exit(1)
+
+
+def validate_partner_properties():
+    # ESIGNET_INSTANCES and INJI_INSTANCES are optional — zero instances is valid.
+    if read_partner_properties("PARTNER_ID") is None:
+        print("[CONFIG ERROR] Missing PARTNER_ID in partner.properties.")
+        sys.exit(1)
+
+
 def read_bootstrap_properties(key):
-    with open('bootstrap.properties', 'r') as file:
-        for line in file:
-            if line.startswith(key) and '=' in line:
-                return line.split('=', 1)[1].strip()
+    with open("bootstrap.properties", "r") as f:
+        for line in f:
+            if line.startswith(key) and "=" in line:
+                return line.split("=", 1)[1].strip()
     return None
 
-# Helper function for local file fallback
+
 def read_partner_properties(key):
     try:
-        with open("partner.properties", "r") as file:
-            for line in file:
-                if line.startswith(key):
-                    return line.split("=", 1)[1].strip()
-
+        with open("partner.properties", "r") as f:
+            lines = f.readlines()
     except FileNotFoundError:
         return None
 
+    for i, line in enumerate(lines):
+        if not line.startswith(key) or "=" not in line:
+            continue
+
+        value = line.split("=", 1)[1].strip()
+
+        if not value.startswith("{"):
+            return value
+
+        # Multi-line JSON: accumulate lines until curly-brace depth reaches zero.
+        depth = value.count("{") - value.count("}")
+        j = i + 1
+        while depth > 0 and j < len(lines):
+            chunk = lines[j].strip()
+            if chunk and not chunk.startswith("#"):
+                value += "\n" + chunk
+                depth += chunk.count("{") - chunk.count("}")
+            j += 1
+
+        return value
+
     return None
 
-# Function to build partner to instance mapping 
-def load_partner_instance_mapping():
+
+def load_partner_instance_mapping(config_source):
     esignet_mapping = {}
     inji_mapping = {}
 
-    try:
-        esignet_json = (
-            os.environ.get("ESIGNET_INSTANCES")
-            or read_partner_properties("ESIGNET_INSTANCES")
-            or "{}"
-        )
-        esignet_instances = json.loads(esignet_json)
+    def get_raw(key):
+        if config_source == "env":
+            return os.environ.get(key, "{}")
+        return read_partner_properties(key) or "{}"
 
-        if not isinstance(esignet_instances, dict):
-            print(
-                "[CONFIG ERROR] "
-                "ESIGNET_INSTANCES "
-                "must be a JSON object."
-            )
-            esignet_instances = {}
+    def parse_instances(label, raw):
+        try:
+            instances = json.loads(raw)
+            if not isinstance(instances, dict):
+                print(f"[CONFIG ERROR] {label}_INSTANCES must be a JSON object.")
+                return {}
+            return instances
+        except Exception as e:
+            print(f"[CONFIG ERROR] Failed to parse {label}_INSTANCES: {e}")
+            return {}
 
-    except Exception as e:
-        print(
-            f"[CONFIG ERROR] "
-            f"Failed to parse "
-            f"ESIGNET_INSTANCES: {e}"
-        )
-        esignet_instances = {}
+    def build_mapping(label, instances, mapping):
+        for name, cfg in instances.items():
+            if not isinstance(cfg, dict):
+                print(f"[CONFIG ERROR] Invalid config for {label} instance '{name}'.")
+                continue
 
-    try:
-        inji_json = (
-            os.environ.get("INJI_INSTANCES")
-            or read_partner_properties("INJI_INSTANCES")
-            or "{}"
-        )
-        inji_instances = json.loads(inji_json)
+            url = cfg.get("url")
+            namespace = cfg.get("namespace")
+            deployment = cfg.get("deployment")
+            partners = cfg.get("partners", [])
 
-        if not isinstance(inji_instances, dict):
-            print(
-                "[CONFIG ERROR] "
-                "INJI_INSTANCES "
-                "must be a JSON object."
-            )
-            inji_instances = {}
+            missing = [k for k, v in [("url", url), ("namespace", namespace), ("deployment", deployment)] if not v]
+            if missing:
+                print(f"[CONFIG ERROR] {label} instance '{name}' is missing: {', '.join(missing)}.")
+                continue
 
-    except Exception as e:
-        print(
-            f"[CONFIG ERROR] "
-            f"Failed to parse "
-            f"INJI_INSTANCES: {e}"
-        )
-        inji_instances = {}
+            if not isinstance(partners, list):
+                print(f"[CONFIG ERROR] {label} instance '{name}': partners must be a list.")
+                continue
 
-    for instance_name, config in (esignet_instances.items()):
-        if not isinstance(config, dict):
-            print(
-                f"[CONFIG ERROR] "
-                f"Invalid configuration for "
-                f"eSignet instance "
-                f"'{instance_name}'"
-            )
-            continue
+            for pid in partners:
+                pid = str(pid).strip()
+                if pid:
+                    mapping[pid] = {"url": url, "namespace": namespace, "deployment": deployment}
 
-        url = config.get("url")
-        namespace = config.get("namespace")
-        partners = config.get("partners", [])
-        deployment = config.get("deployment")
+    esignet_instances = parse_instances("ESIGNET", get_raw("ESIGNET_INSTANCES"))
+    inji_instances = parse_instances("INJI", get_raw("INJI_INSTANCES"))
 
-        if not deployment:
-            print(
-                f"[CONFIG ERROR] "
-                f"Deployment missing for "
-                f"eSignet instance "
-                f"'{instance_name}'"
-            )
-            continue
+    build_mapping("eSignet", esignet_instances, esignet_mapping)
+    build_mapping("Inji", inji_instances, inji_mapping)
 
-        if not url:
-            print(
-                f"[CONFIG ERROR] "
-                f"URL missing for "
-                f"eSignet instance "
-                f"'{instance_name}'"
-            )
-            continue
+    return esignet_mapping, inji_mapping
 
-        if not namespace:
-            print(
-                f"[CONFIG ERROR] "
-                f"Namespace missing for "
-                f"eSignet instance "
-                f"'{instance_name}'"
-            )
-            continue
 
-        if not isinstance(partners, list):
-            print(
-                f"[CONFIG ERROR] "
-                f"Partners must be a list "
-                f"for eSignet instance "
-                f"'{instance_name}'"
-            )
-            continue
+def is_running_in_kubernetes():
+    return os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
-        for partner_id in partners:
-            esignet_mapping[partner_id] = {
-                "url": url,
-                "namespace": namespace,
-                "deployment": deployment
-            }
 
-    for instance_name, config in (inji_instances.items()):
-        if not isinstance(config, dict):
-            print(
-                f"[CONFIG ERROR] "
-                f"Invalid configuration for "
-                f"Inji instance "
-                f"'{instance_name}'"
-            )
-            continue
-
-        url = config.get("url")
-        namespace = config.get("namespace")
-        partners = config.get("partners", [])
-        deployment = config.get("deployment")
-
-        if not deployment:
-            print(
-                f"[CONFIG ERROR] "
-                f"Deployment missing for "
-                f"Inji instance "
-                f"'{instance_name}'"
-            )
-            continue
-            
-        if not url:
-            print(
-                f"[CONFIG ERROR] "
-                f"URL missing for "
-                f"Inji instance "
-                f"'{instance_name}'"
-            )
-            continue
-
-        if not namespace:
-            print(
-                f"[CONFIG ERROR] "
-                f"Namespace missing for "
-                f"Inji instance "
-                f"'{instance_name}'"
-            )
-            continue
-
-        if not isinstance(partners, list):
-            print(
-                f"[CONFIG ERROR] "
-                f"Partners must be a list "
-                f"for Inji instance "
-                f"'{instance_name}'"
-            )
-            continue
-
-        for partner_id in partners:
-            inji_mapping[partner_id] = {
-                "url": url,
-                "namespace": namespace,
-                "deployment": deployment
-            }
-
-    return (esignet_mapping,inji_mapping)
-
-# Function to check if certificate is expired
 def is_certificate_expired(expiration_date):
-    expiration_date = datetime.strptime(expiration_date, "%b %d %H:%M:%S %Y %Z")
-    current_date = datetime.utcnow()
-    return current_date > expiration_date
+    expiry_dt = datetime.strptime(expiration_date, "%b %d %H:%M:%S %Y %Z")
+    return datetime.utcnow() > expiry_dt
 
-# Function to write expired certificates to a text file
-def write_to_expired_txt(cert_name):
-    with open('expired.txt', 'a') as file:
-        file.write(cert_name + '\n')
 
-# Function to format certificate data
+def write_to_expired_txt(partner_id):
+    with open("expired.txt", "a") as f:
+        f.write(partner_id + "\n")
+
+
 def format_certificate(cert_data):
     if not cert_data:
         return None
     return cert_data.replace("\n", "\\n")
 
-# Function to retrieve certificate data from the database
+
 def retrieve_certificate_data(partner_id, db_host, db_port, db_user, db_password):
-    pms_conn = None
-    keymgr_conn = None
-    pms_cursor = None
-    keymgr_cursor = None
-
+    pms_conn = pms_cursor = keymgr_conn = keymgr_cursor = None
     try:
-        print(f"Connecting to PMS DB: {db_host}:{db_port}")
         pms_conn = psycopg2.connect(
-            host = db_host,
-            port = db_port,
-            database = "mosip_pms",
-            user = db_user,
-            password = db_password
+            host=db_host, port=db_port, database="mosip_pms",
+            user=db_user, password=db_password
         )
-        print("Connected to PMS DB")
-
         pms_cursor = pms_conn.cursor()
         pms_cursor.execute(
-            """
-            SELECT certificate_alias
-            FROM pms.partner
-            WHERE id = %s;
-            """,
+            "SELECT certificate_alias FROM pms.partner WHERE id = %s;",
             (partner_id,)
         )
-
         result = pms_cursor.fetchone()
         if not result:
-            print(f"[{partner_id}] No certificate alias found in PMS.")
+            print(f"  [{partner_id}] No certificate alias found in PMS.")
             return None
         certificate_alias = result[0]
 
-        # sql_query_cert_data = f"SELECT cert_data FROM keymgr.partner_cert_store WHERE cert_id = '{certificate_alias}';"
-        print(f"Connecting to Key Manager DB: {db_host}:{db_port}")
         keymgr_conn = psycopg2.connect(
-            host = db_host,
-            port = db_port,
-            database = "mosip_keymgr",
-            user = db_user,
-            password = db_password
+            host=db_host, port=db_port, database="mosip_keymgr",
+            user=db_user, password=db_password
         )
-        print("Connected to Key Manager DB\n")
-
         keymgr_cursor = keymgr_conn.cursor()
         keymgr_cursor.execute(
-            """
-            SELECT cert_data
-            FROM keymgr.partner_cert_store
-            WHERE cert_id = %s;
-            """,
+            "SELECT cert_data FROM keymgr.partner_cert_store WHERE cert_id = %s;",
             (certificate_alias,)
         )
-        
-        # cert_data = keymgr_cursor.fetchone()[0]
         result = keymgr_cursor.fetchone()
         if not result:
-            print(f"[{partner_id}] No certificate data found in Key Manager.")
+            print(f"  [{partner_id}] No certificate data found in Key Manager.")
             return None
-        cert_data = result[0]
 
-        formatted_cert_data = format_certificate(cert_data)
-        return formatted_cert_data
+        return format_certificate(result[0])
 
     except Exception as e:
-        print(f"Error retrieving certificate data for Partner ID '{partner_id}': {str(e)}")
+        print(f"  [{partner_id}] Failed to retrieve certificate from DB: {e}")
         return None
-    
+
     finally:
-        if pms_cursor:
-            pms_cursor.close()
+        for obj in (pms_cursor, pms_conn, keymgr_cursor, keymgr_conn):
+            if obj:
+                obj.close()
 
-        if pms_conn:
-            pms_conn.close()
-
-        if keymgr_cursor:
-            keymgr_cursor.close()
-
-        if keymgr_conn:
-            keymgr_conn.close()
-
-# Function to get current UTC time in ISO 8601 format with milliseconds
 def get_utc_timestamp():
-    return datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
-
-# Function to authenticate and retrieve the token
-def authenticate_and_get_token(base_url, client_secret):
-    auth_url = (
-        f"https://{base_url}"
-        f"/v1/authmanager/authenticate/clientidsecretkey"
+    return (
+        datetime.utcnow()
+        .replace(tzinfo=timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
     )
 
-    headers = {
-        "Content-Type": "application/json"
-    }
+def extract_api_errors(response_json):
+    errors = response_json.get("errors", [])
+    messages = []
+    for err in errors:
+        if isinstance(err, dict):
+            messages.append(
+                err.get("message")
+                or err.get("errorMessage")
+                or err.get("defaultMessage")
+                or str(err)
+            )
+        else:
+            messages.append(str(err))
+    return "; ".join(messages) if messages else None
 
+def authenticate_and_get_token(base_url, client_secret):
+    auth_url = f"https://{base_url}/v1/authmanager/authenticate/clientidsecretkey"
     auth_data = {
         "id": "string",
         "metadata": {},
         "request": {
-            "appId": "ida",
-            "clientId": "mosip-deployment-client",
-            "secretKey": client_secret
+            "appId": "partner",
+            "clientId": "mosip-pms-client",
+            "secretKey": client_secret,
         },
-        "requesttime": get_utc_timestamp(),
-        "version": "string"
+        #"requesttime": get_utc_timestamp(),
+        "version": "string",
     }
 
     try:
         response = requests.post(
             auth_url,
-            headers = headers,
-            json = auth_data,
-            timeout = REQUEST_TIMEOUT
+            headers={"Content-Type": "application/json"},
+            json=auth_data,
+            timeout=REQUEST_TIMEOUT,
         )
-
     except requests.exceptions.Timeout:
-        print(
-            "Authentication failed: "
-            f"Request timed out after "
-            f"{REQUEST_TIMEOUT} seconds."
-        )
+        print(f"[ERROR] Authentication timed out after {REQUEST_TIMEOUT}s.")
         return None
-
     except requests.exceptions.RequestException as e:
-        print(f"Authentication request failed: {str(e)}")
+        print(f"[ERROR] Authentication request failed: {e}")
         return None
 
     if response.status_code == 200:
         token = response.headers.get("authorization")
-
         if not token:
-            print(
-                "Authentication succeeded "
-                "but authorization header missing."
-            )
+            print("[ERROR] Authentication succeeded but authorization token is missing in response headers.")
             return None
-
         return token
 
-    print(
-        f"Authentication failed "
-        f"(HTTP {response.status_code}): "
-        f"{response.text[:300].strip()}"
-    )
-
+    print(f"[ERROR] Authentication failed (HTTP {response.status_code}): {response.text[:300].strip()}")
     return None
 
-# Function to upload certificate
-# Returns signedCertificateData if successful
-def upload_certificate_with_token(token, cert_data, partner_id, base_url, esignet_mapping, inji_mapping):
-    upload_url = (
-        f"https://{base_url}"
-        f"/v1/partnermanager/partners/certificate/upload"
-    )
-
-    headers = {
-        "Content-Type": "application/json",
-        "Cookie": f"Authorization={token}"
-    }
-
-    special_partners = set(list(esignet_mapping.keys()) + list(inji_mapping.keys()))
-    partner_domain = ("MISP" if partner_id in special_partners else "AUTH")
+def upload_certificate_to_partnermanager(token, cert_data, partner_id, base_url, esignet_mapping, inji_mapping):
+    upload_url = f"https://{base_url}/v1/partnermanager/partners/certificate/upload"
+    special_partners = set(esignet_mapping) | set(inji_mapping)
+    partner_domain = "MISP" if partner_id in special_partners else "AUTH"
 
     upload_data = {
         "id": "string",
@@ -389,408 +294,320 @@ def upload_certificate_with_token(token, cert_data, partner_id, base_url, esigne
         "request": {
             "certificateData": cert_data.replace("\\n", "\n"),
             "partnerDomain": partner_domain,
-            "partnerId": partner_id
+            "partnerId": partner_id,
         },
-        "requesttime": get_utc_timestamp(),
-        "version": "string"
+        #"requesttime": get_utc_timestamp(),
+        "version": "string",
     }
 
     try:
         response = requests.post(
             upload_url,
-            headers = headers,
-            json = upload_data,
-            timeout = REQUEST_TIMEOUT
+            headers={"Content-Type": "application/json", "Cookie": f"Authorization={token}"},
+            json=upload_data,
+            timeout=REQUEST_TIMEOUT,
         )
-
     except requests.exceptions.Timeout:
-        print(
-            f"[{partner_id}] Certificate renewal failed: "
-            f"Request timed out after "
-            f"{REQUEST_TIMEOUT} seconds."
-        )
+        print(f"  [{partner_id}] Upload to PartnerManager timed out after {REQUEST_TIMEOUT}s.")
         return None
-
-    except requests.exceptions.ConnectionError as e:
-        print(
-            f"[{partner_id}] Certificate renewal failed: "
-            f"Connection error - {str(e)}"
-        )
-        return None
-
     except requests.exceptions.RequestException as e:
-        print(
-            f"[{partner_id}] Certificate renewal request failed: "
-            f"{str(e)}"
-        )
+        print(f"  [{partner_id}] Upload to PartnerManager failed: {e}")
         return None
 
     try:
         response_json = response.json()
-
     except ValueError:
-        print(
-            f"[{partner_id}] Certificate renewal failed "
-            f"(HTTP {response.status_code}): "
-            f"Non-JSON response - "
-            f"{response.text[:300].strip()}"
-        )
+        print(f"  [{partner_id}] Upload to PartnerManager failed (HTTP {response.status_code}): non-JSON response.")
         return None
 
     if response.status_code not in (200, 201):
-        errors = response_json.get("errors", [])
-
-        if errors:
-            error_messages = []
-
-            for err in errors:
-                if isinstance(err, dict):
-                    error_messages.append(
-                        err.get("message")
-                        or err.get("errorMessage")
-                        or err.get("defaultMessage")
-                        or str(err)
-                    )
-                else:
-                    error_messages.append(str(err))
-
-            error_text = "; ".join(error_messages)
-
-            if "certificate dates not valid" in error_text.lower():
-                error_text += (
-                    ". Please upload a fresh "
-                    "certificate with at least "
-                    "1 year validity left."
-                )
-
-            print(
-                f"[{partner_id}] "
-                f"Certificate renewal failed "
-                f"(HTTP {response.status_code}): "
-                f"{error_text}"
-            )
-
-        else:
-            print(
-                f"[{partner_id}] "
-                f"Certificate renewal failed "
-                f"(HTTP {response.status_code}): "
-                f"{response.text[:300].strip()}"
-            )
-
+        error_text = extract_api_errors(response_json) or response.text[:300].strip()
+        if "certificate dates not valid" in error_text.lower():
+            error_text += " Please upload a fresh certificate with at least 1 year of validity."
+        print(f"  [{partner_id}] Upload to PartnerManager failed (HTTP {response.status_code}): {error_text}")
         return None
 
-    response_body = response_json.get("response", {})
-
-    signed_certificate = response_body.get("signedCertificateData")
-
+    signed_certificate = response_json.get("response", {}).get("signedCertificateData")
     if not isinstance(signed_certificate, str) or not signed_certificate.strip():
-        print(
-            f"[{partner_id}] "
-            f"Certificate renewal failed: "
-            f"Invalid or missing "
-            f"signedCertificateData "
-            f"in API response."
-        )
+        print(f"  [{partner_id}] Upload to PartnerManager succeeded but signedCertificateData is missing.")
         return None
 
     return signed_certificate
 
-
-# Function to post-upload to dependent systems
-def post_upload_to_system(endpoint, token, app_id, cert_data, reference_id, partner_id, bearer = False):
-    if bearer:
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}"
-        }
-    else:
-        headers = {
-            "Content-Type": "application/json",
-            "Cookie": f"Authorization={token}"
-        }
-
+def upload_certificate_to_system(endpoint, token, app_id, cert_data, reference_id, partner_id, bearer=False):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization" if bearer else "Cookie": f"Bearer {token}" if bearer else f"Authorization={token}",
+    }
     payload = {
         "request": {
             "certificateData": cert_data,
             "applicationId": app_id,
-            "referenceId": reference_id
+            "referenceId": reference_id,
         },
-        "requestTime": get_utc_timestamp()
+        #"requestTime": get_utc_timestamp(),
     }
 
     try:
-        response = requests.post(
-            endpoint,
-            headers = headers,
-            json = payload,
-            timeout = REQUEST_TIMEOUT
-        )
-
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
     except requests.exceptions.Timeout:
-        print(
-            f"[{partner_id}] Certificate upload back to "
-            f"[{app_id}] failed: Request timed out "
-            f"after {REQUEST_TIMEOUT} seconds."
-        )
+        print(f"  [{partner_id}] Upload to {app_id} timed out after {REQUEST_TIMEOUT}s.")
         return False
-
-    except requests.exceptions.ConnectionError as e:
-        print(
-            f"[{partner_id}] Certificate upload back to "
-            f"[{app_id}] failed: Connection error - {str(e)}"
-        )
-        return False
-
     except requests.exceptions.RequestException as e:
-        print(
-            f"[{partner_id}] Certificate upload back to "
-            f"[{app_id}] request failed: {str(e)}"
-        )
+        print(f"  [{partner_id}] Upload to {app_id} failed: {e}")
         return False
 
     try:
         response_json = response.json()
-
     except ValueError:
-        print(
-            f"[{partner_id}] Certificate upload back to "
-            f"[{app_id}] failed "
-            f"(HTTP {response.status_code}): "
-            f"Non-JSON response - "
-            f"{response.text[:300].strip()}"
-        )
-        return False
+        response_json = None
 
     if response.status_code not in (200, 201):
-        errors = response_json.get("errors", [])
-
-        if errors:
-            error_messages = []
-
-            for err in errors:
-                if isinstance(err, dict):
-                    error_messages.append(
-                        err.get("message")
-                        or err.get("errorMessage")
-                        or err.get("defaultMessage")
-                        or str(err)
-                    )
-                else:
-                    error_messages.append(str(err))
-            
-            error_text = "; ".join(error_messages)
-            if "certificate dates not valid" in error_text.lower():
-                error_text += (
-                    ". Please upload a fresh "
-                    "certificate with at least "
-                    "1 year validity left."
-            )
-
-            print(
-                f"[{partner_id}] Certificate upload back to "
-                f"[{app_id}] failed "
-                f"(HTTP {response.status_code}): "
-                f"{error_text}"
-            )
-
+        if response_json is not None:
+            error_text = extract_api_errors(response_json) or response.text[:500].strip()
         else:
-            print(
-                f"[{partner_id}] Certificate upload back to "
-                f"[{app_id}] failed "
-                f"(HTTP {response.status_code}): "
-                f"{response.text[:300].strip()}"
-            )
-
+            error_text = response.text[:500].strip() or "(empty response body)"
+        if "certificate dates not valid" in error_text.lower():
+            error_text += " Please upload a fresh certificate with at least 1 year of validity."
+        print(f"  [{partner_id}] Upload to {app_id} failed (HTTP {response.status_code}): {error_text}")
         return False
-
-    print(
-        f"[{partner_id}] certificate uploaded back to "
-        f"[{app_id}] successfully."
-    )
 
     return True
 
-# Load configuration
-postgres_host = os.environ.get('db-host') or read_bootstrap_properties('db-host')
-postgres_port = os.environ.get('db-port') or read_bootstrap_properties('db-port')
-postgres_user = os.environ.get('db-su-user') or read_bootstrap_properties('db-su-user')
-postgres_password = os.environ.get('postgres-password') or read_bootstrap_properties('postgres-password')
+def parse_cert_expiry(pem):
+    proc = subprocess.run(
+        ["openssl", "x509", "-noout", "-enddate"],
+        input=pem.encode(),
+        capture_output=True,
+    )
+    output = proc.stdout.decode()
+    if "=" not in output:
+        return None, None
+    end_date_str = output.split("=", 1)[1].strip()
+    end_date = datetime.strptime(end_date_str, "%b %d %H:%M:%S %Y %Z")
+    days_left = (end_date - datetime.utcnow()).days
+    return end_date_str, days_left
 
-# base_url = os.environ.get('mosip-api-internal-host') or read_bootstrap_properties('mosip-api-internal-host')
-# base_esignet_url = os.environ.get('mosip-api-host') or read_bootstrap_properties('mosip-api-external-host')
+# Configuration 
 
-partnermanager_base_url = (os.environ.get('PARTNERMANAGER_BASE_URL') or read_bootstrap_properties('PARTNERMANAGER_BASE_URL'))
-keymanager_base_url = (os.environ.get('KEYMANAGER_BASE_URL') or read_bootstrap_properties('KEYMANAGER_BASE_URL'))
-ida_base_url = (os.environ.get('IDA_BASE_URL')or read_bootstrap_properties('IDA_BASE_URL'))
+config_source = validate_configuration()
+if config_source == "file":
+    validate_bootstrap_properties()
+    validate_partner_properties()
 
-# esignet_base_url = (os.environ.get('ESIGNET_BASE_URL') or read_bootstrap_properties('ESIGNET_BASE_URL'))
-# inji_certify_base_url = (os.environ.get('INJI_CERTIFY_BASE_URL')or read_bootstrap_properties('INJI_CERTIFY_BASE_URL'))
+if config_source == "env":
+    postgres_host = os.environ.get("db-host")
+    postgres_port = os.environ.get("db-port")
+    postgres_user = os.environ.get("db-su-user")
+    postgres_password = os.environ.get("postgres-password")
 
-client_secret = os.environ.get('mosip_deployment_client_secret') or read_bootstrap_properties('mosip_deployment_client_secret')
-pre_expiry_days = int(os.environ.get('pre-expiry-days') or read_bootstrap_properties('pre-expiry-days'))
-# ns_esignet = os.environ.get('ns_esignet')
-TOKEN = authenticate_and_get_token(partnermanager_base_url, client_secret)
-
-if TOKEN:
-    esignet_mapping, inji_mapping = load_partner_instance_mapping()
-
-    partner_ids = os.environ.get('PARTNER_IDS_ENV')
-
-    if partner_ids:
-        partner_ids = [
-            pid.strip()
-            for pid in partner_ids.split(',')
-            if pid.strip()
-        ]
-
-    else:
-        partner_ids = []
-        with open('partner.properties', 'r') as file:
-            for line in file:
-                if line.startswith('PARTNER_ID'):
-                    partner_ids = [
-                        pid.strip()
-                        for pid in line.strip().split('=')[1].split(',')
-                        if pid.strip()
-                    ]
-                    break
-        
-    if os.path.exists("expired.txt"):
-        os.remove("expired.txt")
-
-    for PARTNER_ID in partner_ids:
-        # PARTNER_ID = PARTNER_ID.strip()
-        print(f"\nProcessing partner ID: {PARTNER_ID}")
-        try:
-            req = Request(
-                f"https://{partnermanager_base_url}/v1/partnermanager/partners/{PARTNER_ID}/certificate",
-                headers={"Content-Type": "application/json", "Cookie": f"Authorization={TOKEN}"},
-                method="GET"
-            )
-            response = urlopen(req, timeout = REQUEST_TIMEOUT)
-            raw_data = response.read().decode('utf-8')
-            try:
-                response_data = json.loads(raw_data)
-            except json.JSONDecodeError:
-                print(f"[{PARTNER_ID}] Invalid JSON response.")
-                continue
-
-            if not response_data or not isinstance(response_data, dict):
-                print(f"[{PARTNER_ID}] Invalid or empty response.")
-                continue
-
-            cert_info = response_data.get('response')
-            CERTIFICATE_DATA = cert_info.get('certificateData') if cert_info else None
-
-            if not CERTIFICATE_DATA:
-                print(f"[{PARTNER_ID}] Certificate data not found.")
-                continue
-
-            expiration_date = os.popen(f"echo '{CERTIFICATE_DATA}' | openssl x509 -noout -enddate").read().split('=')[1].strip()
-            expiry_dt = datetime.strptime(expiration_date, "%b %d %H:%M:%S %Y %Z")
-            days_left = (expiry_dt - datetime.utcnow()).days
-
-            if is_certificate_expired(expiration_date) or days_left <= int(pre_expiry_days):
-                print(f"[{PARTNER_ID}] Certificate is expired or will expire in {days_left} day(s). Renewing...")
-                write_to_expired_txt(PARTNER_ID)
-            else:
-                print(f"[{PARTNER_ID}] Certificate is valid. {days_left} day(s) left.")
-
-        except HTTPError as e:
-            print(f"[{PARTNER_ID}] HTTP error while fetching certificate: {e}")
-            continue
-        except Exception as e:
-            print(f"[{PARTNER_ID}] Unexpected error: {e}")
-            continue
-
-    if os.path.exists("expired.txt"):
-        with open("expired.txt", "r") as file:
-            expired_partner_ids = [line.strip() for line in file if line.strip()]
-    else:
-        expired_partner_ids = []
-
-    for partner_id in expired_partner_ids:
-        cert_data = retrieve_certificate_data(partner_id, postgres_host, postgres_port, postgres_user, postgres_password)
-        if not cert_data:
-            continue
-
-        try:
-            pem = cert_data.replace("\\n", "\n")
-            
-            end_date_str = os.popen(f"echo '{pem}' | openssl x509 -noout -enddate").read().split('=')[1].strip()
-            end_date = datetime.strptime(end_date_str, "%b %d %H:%M:%S %Y %Z")
-            if (end_date - datetime.utcnow()).days < 365:
-                print(f"DB cert for {partner_id} has less than 365 days left. Skipping.")
-                continue
-        except Exception as e:
-            print(f"Error validating DB cert for {partner_id}: {e}")
-            continue
-
-        signed_cert = upload_certificate_with_token(
-            TOKEN, 
-            cert_data, 
-            partner_id, 
-            partnermanager_base_url,
-            esignet_mapping,
-            inji_mapping
-        )
-        if not signed_cert:
-            continue
-
-        # Post-upload to relevant systems
-        success = True
-
-        if partner_id in esignet_mapping:
-            instance = esignet_mapping[partner_id]
-            esignet_url = instance["url"]
-            deployment = instance["deployment"]
-
-            success = post_upload_to_system(f"https://{esignet_url}" "/v1/esignet/system-info/uploadCertificate", TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True)
-
-            if success:
-                namespace = instance["namespace"]
-                try:
-                    subprocess.run(["kubectl", "rollout", "restart", "deployment", deployment, "-n", namespace], check = True)
-                except Exception as e:
-                    print(
-                        f"[{partner_id}] "
-                        f"Failed to restart deployment "
-                        f"in namespace '{namespace}': {e}"
-                    )
-    
-            #else:
-            #    print(f"[{partner_id}] Upload to Esignet failed. Skipping restart.")
-
-        elif partner_id in inji_mapping:
-            instance = inji_mapping[partner_id]
-            inji_url = instance["url"]
-            deployment = instance["deployment"]
-
-            success = post_upload_to_system(f"https://{inji_url}" "/v1/certify/system-info/uploadCertificate",
-                TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True)
-
-            #if not success:
-            #    print(f"[{partner_id}] Upload to Inji Certify failed.")
-
-        elif partner_id == 'mpartner-default-digitalcard':
-            success = post_upload_to_system(f"https://{keymanager_base_url}/v1/keymanager/uploadCertificate", TOKEN, "DIGITAL_CARD", signed_cert, partner_id, partner_id)
-    
-        elif partner_id == 'mpartner-default-auth':
-            success = post_upload_to_system(f"https://{ida_base_url}/idauthentication/v1/internal/uploadCertificate", TOKEN, "IDA", signed_cert, partner_id, partner_id)
-
-        elif partner_id == 'mpartner-default-resident':
-            success = post_upload_to_system(f"https://{keymanager_base_url}/v1/keymanager/uploadCertificate", TOKEN, "RESIDENT", signed_cert, partner_id, partner_id)
-        
-        if success or (partner_id not in esignet_mapping
-                       and partner_id not in inji_mapping
-                       and partner_id not in ['mpartner-default-digitalcard',
-                                             'mpartner-default-auth',
-                                             'mpartner-default-resident']
-        ):
-            print(f"[{partner_id}] certificate renewed successfully and will be valid for 1 more year.")
-
-    print("MOSIP Certificate Manager Run Completed.")
-
+    partnermanager_base_url = os.environ.get("PARTNERMANAGER_BASE_URL")
+    keymanager_base_url = os.environ.get("KEYMANAGER_BASE_URL")
+    ida_base_url = os.environ.get("IDA_BASE_URL")
+    pre_expiry_days = int(os.environ.get("pre-expiry-days"))
+    client_secret = os.environ.get("mosip_pms_client_secret")
 else:
-    print("Failed to get auth-token")
+    postgres_host = read_bootstrap_properties("db-host")
+    postgres_port = read_bootstrap_properties("db-port")
+    postgres_user = read_bootstrap_properties("db-su-user")
+    postgres_password = read_bootstrap_properties("postgres-password")
+
+    partnermanager_base_url = read_bootstrap_properties("PARTNERMANAGER_BASE_URL")
+    keymanager_base_url = read_bootstrap_properties("KEYMANAGER_BASE_URL")
+    ida_base_url = read_bootstrap_properties("IDA_BASE_URL")
+    pre_expiry_days = int(read_bootstrap_properties("pre-expiry-days"))
+    client_secret = read_bootstrap_properties("mosip_pms_client_secret")
+
+# Authentication 
+
+TOKEN = authenticate_and_get_token(partnermanager_base_url, client_secret)
+if not TOKEN:
+    print("[ERROR] Could not obtain auth token. Exiting.")
+    sys.exit(1)
+
+esignet_mapping, inji_mapping = load_partner_instance_mapping(config_source)
+
+if config_source == "env":
+    partner_ids_raw = os.environ.get("PARTNER_IDS_ENV", "")
+else:
+    partner_ids_raw = read_partner_properties("PARTNER_ID")
+
+if not partner_ids_raw:
+    print("[CONFIG ERROR] No partner IDs configured.")
+    sys.exit(1)
+
+partner_ids = [pid.strip() for pid in partner_ids_raw.split(",") if pid.strip()]
+
+# Phase 1: Check certificate expiry
+
+if os.path.exists("expired.txt"):
+    os.remove("expired.txt")
+
+print()
+for partner_id in partner_ids:
+    try:
+        url = f"https://{partnermanager_base_url}/v1/partnermanager/partners/{partner_id}/certificate"
+        headers = {"Content-Type": "application/json", "Cookie": f"Authorization={TOKEN}"}
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+        if response.status_code != 200:
+            print(f"[{partner_id}] Could not fetch certificate (HTTP {response.status_code}): {response.text[:300].strip()}")
+            continue
+
+        try:
+            response_data = response.json()
+        except ValueError:
+            print(f"[{partner_id}] Invalid JSON response from PartnerManager.")
+            continue
+
+        if not isinstance(response_data, dict):
+            print(f"[{partner_id}] Unexpected response format from PartnerManager.")
+            continue
+
+        errors = response_data.get("errors")
+        if errors:
+            error_text = extract_api_errors({"errors": errors})
+            print(f"[{partner_id}] PartnerManager returned errors: {error_text}")
+            continue
+
+        cert_info = response_data.get("response")
+        cert_data = cert_info.get("certificateData") if cert_info else None
+
+        if not cert_data:
+            print(f"[{partner_id}] No certificate data in response — queuing for DB lookup.")
+            write_to_expired_txt(partner_id)
+            continue
+
+        try:
+            pem = cert_data.replace("\r\n", "\n").strip()
+            expiration_date, days_left = parse_cert_expiry(pem)
+
+            if expiration_date is None:
+                print(f"[{partner_id}] Could not parse certificate — queuing for DB lookup.")
+                write_to_expired_txt(partner_id)
+                continue
+
+        except Exception:
+            print(f"[{partner_id}] Certificate parsing error — queuing for DB lookup.")
+            write_to_expired_txt(partner_id)
+            continue
+
+        if is_certificate_expired(expiration_date) or days_left <= pre_expiry_days:
+            print(f"[{partner_id}] Certificate expires in {days_left} day(s) — queued for renewal.")
+            write_to_expired_txt(partner_id)
+        else:
+            print(f"[{partner_id}] Certificate is valid ({days_left} day(s) remaining).")
+
+    except Exception as e:
+        print(f"[{partner_id}] Unexpected error during expiry check: {e}")
+        continue
+
+# Phase 2: Renew expired certificates
+
+if os.path.exists("expired.txt"):
+    with open("expired.txt", "r") as f:
+        seen = set()
+        expired_partner_ids = []
+        for line in f:
+            pid = line.strip()
+            if pid and pid not in seen:
+                seen.add(pid)
+                expired_partner_ids.append(pid)
+else:
+    expired_partner_ids = []
+
+if expired_partner_ids:
+    print()
+
+for partner_id in expired_partner_ids:
+    print(f"[{partner_id}] Renewing certificate ...")
+
+    cert_data = retrieve_certificate_data(
+        partner_id, postgres_host, postgres_port, postgres_user, postgres_password
+    )
+    if not cert_data:
+        print(f"  [{partner_id}] Skipped — certificate not found in DB.")
+        continue
+
+    try:
+        pem = cert_data.replace("\\n", "\n").replace("\r\n", "\n").strip()
+        _, days_remaining = parse_cert_expiry(pem)
+
+        if days_remaining is None:
+            print(f"  [{partner_id}] Skipped — could not parse DB certificate.")
+            continue
+
+        if days_remaining < 365:
+            print(
+                f"  [{partner_id}] Skipped — DB certificate has only {days_remaining} day(s) of validity "
+                f"(minimum required: 365 days). Upload a fresh certificate to Key Manager and re-run."
+            )
+            continue
+
+    except Exception as e:
+        print(f"  [{partner_id}] Skipped — DB certificate validation error: {e}")
+        continue
+
+    print(f"  [{partner_id}] Uploading to PartnerManager ...")
+    signed_cert = upload_certificate_to_partnermanager(
+        TOKEN, cert_data, partner_id, partnermanager_base_url, esignet_mapping, inji_mapping
+    )
+    if not signed_cert:
+        continue
+
+    post_upload_success = True
+
+    if partner_id in esignet_mapping:
+        instance = esignet_mapping[partner_id]
+        print(f"  [{partner_id}] Uploading to eSignet ({instance['url']}) ...")
+        post_upload_success = upload_certificate_to_system(
+            f"https://{instance['url']}/v1/esignet/system-info/uploadCertificate",
+            TOKEN, "OIDC_PARTNER", signed_cert, "", partner_id, bearer=True
+        )
+        if post_upload_success:
+            if is_running_in_kubernetes():
+                try:
+                    subprocess.run(
+                        ["kubectl", "rollout", "restart", "deployment",
+                         instance["deployment"], "-n", instance["namespace"]],
+                        check=True,
+                    )
+                    print(f"  [{partner_id}] Deployment '{instance['deployment']}' restarted.")
+                except Exception as e:
+                    print(f"  [{partner_id}] Deployment restart failed: {e}")
+            else:
+                print(f"  [{partner_id}] Skipping rollout restart (not running in Kubernetes) — manual restart of '{instance['deployment']}' may be needed.")
+
+    elif partner_id in inji_mapping:
+        instance = inji_mapping[partner_id]
+        print(f"  [{partner_id}] Uploading to Inji Certify ({instance['url']}) ...")
+        post_upload_success = upload_certificate_to_system(
+            f"https://{instance['url']}/v1/certify/system-info/uploadCertificate",
+            TOKEN, "CERTIFY_PARTNER", signed_cert, "", partner_id
+        )
+
+    elif partner_id == "mpartner-default-digitalcard":
+        print(f"  [{partner_id}] Uploading to Key Manager (DIGITAL_CARD) ...")
+        post_upload_success = upload_certificate_to_system(
+            f"https://{keymanager_base_url}/v1/keymanager/uploadCertificate",
+            TOKEN, "DIGITAL_CARD", signed_cert, partner_id, partner_id
+        )
+
+    elif partner_id == "mpartner-default-auth":
+        print(f"  [{partner_id}] Uploading to IDA ...")
+        post_upload_success = upload_certificate_to_system(
+            f"https://{ida_base_url}/idauthentication/v1/internal/uploadCertificate",
+            TOKEN, "IDA", signed_cert, partner_id, partner_id
+        )
+
+    elif partner_id == "mpartner-default-resident":
+        print(f"  [{partner_id}] Uploading to Key Manager (RESIDENT) ...")
+        post_upload_success = upload_certificate_to_system(
+            f"https://{keymanager_base_url}/v1/keymanager/uploadCertificate",
+            TOKEN, "RESIDENT", signed_cert, partner_id, partner_id
+        )
+
+    if post_upload_success:
+        print(f"  [{partner_id}] Certificate renewed successfully.")
+
+print("\nMOSIP CertManager completed.")

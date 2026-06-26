@@ -5,22 +5,28 @@ mosipcertmanager:
   configmaps:
     db:
       db-port: '5432'
-      db-su-user: 'postgres'
       db-host: 'postgres.sandbox.mosip.net'
+      ## DB superuser. Set in Rancher. Password is NOT here — it comes from the
+      ## 'postgres-postgresql' secret (extraEnvVarsSecret).
+      db-su-user: ''
 
+    ## Comma-separated partner IDs to process. Set in Rancher per-environment.
     partner-ids-env:
-      PARTNER_IDS_ENV:
+      PARTNER_IDS_ENV: ""
 
+    ## eSignet / Inji instance maps. Default "{}" means zero instances; override in
+    ## Rancher with a JSON object keyed by instance name.
     esignet-instance-config:
-      ESIGNET_INSTANCES: ""
+      ESIGNET_INSTANCES: '{}'
 
     inji-instance-config:
-      INJI_INSTANCES: ""
+      INJI_INSTANCES: '{}'
 
     mosipcertmanager:
       pre-expiry-days: '40'
 
-      PARTNERMANAGER_BASE_URL: ""
-      KEYMANAGER_BASE_URL: ""
-      IDA_BASE_URL: ""
+      ## Internal API hosts.
+      PARTNERMANAGER_BASE_URL: "api-internal.sandbox.mosip.net"
+      KEYMANAGER_BASE_URL: "api-internal.sandbox.mosip.net"
+      IDA_BASE_URL: "api-internal.sandbox.mosip.net"
 
