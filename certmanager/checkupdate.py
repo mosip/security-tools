@@ -7,6 +7,32 @@ import subprocess
 from datetime import datetime, timezone
 
 REQUEST_TIMEOUT = 120
+DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+
+def debug_request(method, url, headers=None, body=None):
+    if not DEBUG:
+        return
+    safe_headers = {k: ("***" if k.lower() in ("cookie", "authorization") else v) for k, v in (headers or {}).items()}
+    print(f"[DEBUG] --> {method} {url}")
+    print(f"[DEBUG]     Headers: {safe_headers}")
+    if body is not None:
+        import copy
+        safe_body = copy.deepcopy(body)
+        if isinstance(safe_body, dict):
+            req = safe_body.get("request", {})
+            if "secretKey" in req:
+                req["secretKey"] = "***"
+        print(f"[DEBUG]     Body: {json.dumps(safe_body)}")
+
+def debug_response(url, response):
+    if not DEBUG:
+        return
+    print(f"[DEBUG] <-- {response.status_code} {url}")
+    print(f"[DEBUG]     Response Headers: {dict(response.headers)}")
+    try:
+        print(f"[DEBUG]     Body: {response.text[:1000]}")
+    except Exception:
+        pass
 
 def validate_configuration():
     required_env_vars = [
@@ -259,13 +285,16 @@ def authenticate_and_get_token(base_url, client_secret):
         "version": "string",
     }
 
+    auth_headers = {"Content-Type": "application/json"}
+    debug_request("POST", auth_url, auth_headers, auth_data)
     try:
         response = requests.post(
             auth_url,
-            headers={"Content-Type": "application/json"},
+            headers=auth_headers,
             json=auth_data,
             timeout=REQUEST_TIMEOUT,
         )
+        debug_response(auth_url, response)
     except requests.exceptions.Timeout:
         print(f"[ERROR] Authentication timed out after {REQUEST_TIMEOUT}s.")
         return None
@@ -300,13 +329,16 @@ def upload_certificate_to_partnermanager(token, cert_data, partner_id, base_url,
         "version": "string",
     }
 
+    upload_headers = {"Content-Type": "application/json", "Cookie": f"Authorization={token}"}
+    debug_request("POST", upload_url, upload_headers, upload_data)
     try:
         response = requests.post(
             upload_url,
-            headers={"Content-Type": "application/json", "Cookie": f"Authorization={token}"},
+            headers=upload_headers,
             json=upload_data,
             timeout=REQUEST_TIMEOUT,
         )
+        debug_response(upload_url, response)
     except requests.exceptions.Timeout:
         print(f"  [{partner_id}] Upload to PartnerManager timed out after {REQUEST_TIMEOUT}s.")
         return None
@@ -348,8 +380,10 @@ def upload_certificate_to_system(endpoint, token, app_id, cert_data, reference_i
         #"requestTime": get_utc_timestamp(),
     }
 
+    debug_request("POST", endpoint, headers, payload)
     try:
         response = requests.post(endpoint, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        debug_response(endpoint, response)
     except requests.exceptions.Timeout:
         print(f"  [{partner_id}] Upload to {app_id} timed out after {REQUEST_TIMEOUT}s.")
         return False
@@ -448,7 +482,9 @@ for partner_id in partner_ids:
     try:
         url = f"https://{partnermanager_base_url}/v1/partnermanager/partners/{partner_id}/certificate"
         headers = {"Content-Type": "application/json", "Cookie": f"Authorization={TOKEN}"}
+        debug_request("GET", url, headers)
         response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        debug_response(url, response)
 
         if response.status_code != 200:
             print(f"[{partner_id}] Could not fetch certificate (HTTP {response.status_code}): {response.text[:300].strip()}")
