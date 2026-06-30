@@ -359,7 +359,7 @@ def upload_certificate_to_partnermanager(token, cert_data, partner_id, base_url,
         print(f"  [{partner_id}] Upload to PartnerManager failed (HTTP {response.status_code}): {error_text}")
         return None
 
-    signed_certificate = response_json.get("response", {}).get("signedCertificateData")
+    signed_certificate = (response_json.get("response") or {}).get("signedCertificateData")
     if not isinstance(signed_certificate, str) or not signed_certificate.strip():
         print(f"  [{partner_id}] Upload to PartnerManager succeeded but signedCertificateData is missing.")
         return None
