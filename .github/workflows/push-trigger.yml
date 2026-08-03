@@ -20,6 +20,7 @@ on:
       - release*
       - MOSIP*
       - update
+      - amanudpates
 
 jobs:
   build-dockers:
