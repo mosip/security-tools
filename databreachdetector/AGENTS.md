@@ -39,7 +39,11 @@ Running the script writes several report files into the current directory
 (`id.txt`, `mails.txt`, `mobile_numbers.txt`, `names.txt`, `ages.txt`,
 `dates.txt`, `url.txt`, `locations.txt`) before attempting to upload them to
 the configured MinIO bucket — expect these files to appear locally when
-testing.
+testing. The script does not delete them after upload.
+
+These reports can contain sensitive PII findings. Restrict local access, do
+not commit or share the files, and delete them yourself once the MinIO
+upload is confirmed.
 
 ## Configuration
 

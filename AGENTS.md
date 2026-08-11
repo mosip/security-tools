@@ -50,7 +50,8 @@ has something to build. Do not treat `src/Dummy.java` as real product code.
 
 ## Build & Test Commands
 
-There is no root build. Each module is built and run independently.
+There is no shared product build. Each module is built and run independently.
+The root Maven project exists only for the Sonar workflow.
 
 Run a module directly with Python (from inside the module directory, after
 installing its dependencies):
@@ -81,17 +82,16 @@ cd auditsweeper
 docker build -t auditsweeper:local .
 ```
 
-There are no unit or integration tests to run in this repo. The only CI
-quality gate is `sonar-check.yml`, which runs against the placeholder
-`pom.xml` at the repo root:
+There are no unit or integration tests to run in this repo. CI also runs
+Helm chart linting for changes under `helm/**`. `sonar-check.yml` runs against
+the placeholder `pom.xml` at the repo root:
 
 ```bash
 mvn -B verify sonar:sonar -Dsonar.projectKey=mosip_security-tools -Dsonar.organization=mosip -Dsonar.host.url=https://sonarcloud.io -DskipSigning=true
 ```
 
-Helm chart linting happens in CI only (`chart-lint-publish.yml`, triggered on
-changes under `helm/**`) — there is no documented local lint command in this
-repo; use `helm lint helm/<module>` if you need to check a chart locally.
+Helm chart linting runs in CI (`chart-lint-publish.yml`, triggered on changes
+under `helm/**`). Run `helm lint helm/<module>` locally when needed.
 
 ## Configuration
 
