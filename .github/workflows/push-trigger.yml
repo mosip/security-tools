@@ -28,8 +28,10 @@ jobs:
         include:
           - SERVICE_LOCATION: 'databreachdetector'
             SERVICE_NAME: 'databreachdetector'
+            ONLY_DOCKER: true
           - SERVICE_LOCATION: 'certmanager'
             SERVICE_NAME: 'certmanager'
+            ONLY_DOCKER: true
           - SERVICE_LOCATION: 'auditsweeper'
             SERVICE_NAME: 'auditsweeper'
             ONLY_DOCKER: true
